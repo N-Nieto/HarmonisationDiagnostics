@@ -6,9 +6,9 @@ In an upcoming paper, we plan to demonstrate that systematic evaluation and repo
 
 ## Installation and Usage
 
-Install by downloading directly or by running 
+Install by downloading directly or by running: git clone https://github.com/Jake-Turnbull/HarmonizationDiagnostics.git in the terminal.
 
-Load different components of the module by calling: git clone https://github.com/Jake-Turnbull/HarmonizationDiagnostics.git in the terminal.
+Load different components of the module by calling
 
 ```
 from DiagnoseHarmonization import ModuleName
