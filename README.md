@@ -1,4 +1,4 @@
-# DiagnoseHarmonize v0.9.1
+# DiagnoseHarmonize
 
 DiagnoseHarmonize is an **in-development** library for the streamlined application and assessment of harmonization algorithms at the summary-measure level. It also serves as a centralised location for popular, well-validated harmonization methods from the literature.
 
@@ -6,7 +6,7 @@ In an upcoming paper, we plan to demonstrate that systematic evaluation and repo
 
 ## Installation and Usage
 
-Install by downloading directly or by running: git clone https://github.com/Jake-Turnbull/HarmonizationDiagnostics.git in the terminal.
+Install by downloading directly or by running: pip install git+https://github.com/Jake-Turnbull/HarmonizationDiagnostics.git in the terminal.
 
 Load different components of the module by calling
 

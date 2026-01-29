@@ -87,7 +87,7 @@ def fit_lmm_safe(df, formula_fixed, group_col='batch', reml=False,
             notes.append('fallback_ols_failed')
             return {'success': False, 'mdf': None, 'ols': None, 'notes': notes, 'stats': {}}
 
-    # 3) scale numeric covariates (help optimizers)
+    # 3) scale numeric covariates
     for col in df.columns:
         if col in (group_col, 'y'):
             continue
@@ -220,21 +220,16 @@ def z_score(data):
     return zscored
     
 
-def Cohens_D(Data, batch_indices, BatchNames=None):
+import numpy as np
+
+def Cohens_D(Data, batch_indices, covariates=None, BatchNames=None):
     """
-    Calculate Cohen's d for each feature between all pairs of groups.
-
-    Parameters:
-        Data (np.ndarray): Data matrix (samples x features).
-        batch_indices (list or np.ndarray): Group label for each sample (can be strings).
-        BatchNames (dict or list or None, optional):
-            - If dict: mapping from group value -> readable name (e.g., {'A':'Batch A', 'B':'Batch B'})
-            - If list/tuple: readable names in the same order as the unique groups in batch_indices
-            - If None: readable names are str(group)
-
+    Cohen's d for each batch vs "all other batches" using UNWEIGHTED batch averages.
+    - mean_other: simple (unweighted) mean of the other-batch means
+    - pooled/std: simple (unweighted) mean of the other-batch standard deviations (ddof=1 where possible)
     Returns:
-        np.ndarray: Cohen's d values, shape = (num_pairs, num_features).
-        list: Pair labels, each as a tuple of (name1, name2).
+      d_array: shape (num_batches, num_features)
+      pair_labels: list of (BatchName_g, 'all_data')
     """
     if not isinstance(Data, np.ndarray) or Data.ndim != 2:
         raise ValueError("Data must be a 2D numpy array (samples x features).")
@@ -243,10 +238,8 @@ def Cohens_D(Data, batch_indices, BatchNames=None):
     if Data.shape[0] != len(batch_indices):
         raise ValueError("Number of samples in Data must match length of batch_indices.")
 
-    # preserve order of first appearance (important for string labels)
-    # using dict.fromkeys on the list preserves insertion order (Python 3.7+)
     batch_indices = np.array(batch_indices, dtype=object)
-    unique_groups = np.array(list(dict.fromkeys(batch_indices.tolist())))
+    unique_groups = np.array(list(dict.fromkeys(batch_indices.tolist())))  # preserve order
 
     if len(unique_groups) < 2:
         raise ValueError("At least two unique groups are required to calculate Cohen's d")
@@ -255,7 +248,6 @@ def Cohens_D(Data, batch_indices, BatchNames=None):
     if BatchNames is None:
         BatchNames_map = {g: str(g) for g in unique_groups}
     elif isinstance(BatchNames, dict):
-        # Use provided dict, but fall back to str(g) if a group is missing
         BatchNames_map = {g: BatchNames.get(g, str(g)) for g in unique_groups}
     elif isinstance(BatchNames, (list, tuple)):
         if len(BatchNames) != len(unique_groups):
@@ -264,50 +256,61 @@ def Cohens_D(Data, batch_indices, BatchNames=None):
     else:
         raise ValueError("BatchNames must be a dict, list/tuple, or None.")
 
+    # Residualise if covariates provided
+    if covariates is not None:
+        from numpy.linalg import lstsq
+        covariates = np.asarray(covariates, dtype=float)
+        if covariates.ndim == 1:
+            covariates = covariates.reshape(-1, 1)
+        if covariates.shape[0] != Data.shape[0]:
+            raise ValueError("Covariates must have the same number of rows as Data.")
+        X = np.column_stack([np.ones((covariates.shape[0], 1)), covariates])
+        B, *_ = lstsq(X, Data, rcond=None)
+        predicted = X @ B
+        Data_to_use = Data - predicted
+    else:
+        Data_to_use = Data
+
+    # Compute per-batch stats: n, mean, std (ddof=1)
+    per_batch = {}
+    for g in unique_groups:
+        mask = (batch_indices == g)
+        Xg = Data_to_use[mask]
+        n = Xg.shape[0]
+        if n == 0:
+            raise ValueError(f"No samples found for group {g}")
+        mean = Xg.mean(axis=0)
+        # std with ddof=1 when possible; else nan
+        std = Xg.std(axis=0, ddof=1) if n > 1 else np.full(Data_to_use.shape[1], np.nan)
+        per_batch[g] = {'n': n, 'mean': mean, 'std': std}
+
     pairwise_d = []
     pair_labels = []
 
-    for g1, g2 in combinations(unique_groups, 2):
-        mask1 = batch_indices == g1
-        mask2 = batch_indices == g2
-        data1 = Data[mask1, :]
-        data2 = Data[mask2, :]
-
-        # Means and sample std (ddof=1)
-        mean1 = np.mean(data1, axis=0)
-        mean2 = np.mean(data2, axis=0)
-        std1 = np.std(data1, axis=0, ddof=1)
-        std2 = np.std(data2, axis=0, ddof=1)
-
-        # pooled standard deviation (Cohen's d using average SD)
-        pooled_std = np.sqrt((std1 ** 2 + std2 ** 2) / 2.0)
-        with np.errstate(divide='ignore', invalid='ignore'):
-            d = (mean1 - mean2) / pooled_std
-            d = np.where(np.isnan(d), 0.0, d)  # replace NaNs (e.g., zero pooled std) with 0
-
-        pairwise_d.append(d)
-        pair_labels.append((BatchNames_map[g1], BatchNames_map[g2]))
-    
-    # Calculate Cohen's d for each batch and the overall mean (Commented out below section as likely uneeded and will clutter report)
-    """overall_mean = np.mean(Data, axis=0)
     for g in unique_groups:
-        mask = batch_indices == g
-        data_g = Data[mask, :]
+        stats_g = per_batch[g]
+        mean_g = stats_g['mean']
+        std_g = stats_g['std']
 
-        mean_g = np.mean(data_g, axis=0)
-        std_g = np.std(data_g, axis=0, ddof=1)
+        # other batches (exclude g)
+        other_groups = [h for h in unique_groups if h != g]
+        means_other = np.stack([per_batch[h]['mean'] for h in other_groups], axis=0)  # (num_other, features)
+        stds_other = np.stack([per_batch[h]['std'] for h in other_groups], axis=0)    # (num_other, features)
 
-        pooled_std = np.sqrt((std_g ** 2 + np.var(Data, axis=0, ddof=1)) / 2.0)
-        with np.errstate(divide='ignore', invalid='ignore'):
-            d = (mean_g - overall_mean) / pooled_std
-            d = np.where(np.isnan(d), 0.0, d)  # replace NaNs with 0
+        # UNWEIGHTED averages across batches: simple arithmetic mean (ignore NaNs)
+        mean_other = np.nanmean(means_other, axis=0)
+        mean_std_other = np.nanmean(stds_other, axis=0)
+
+        # If mean_std_other is zero or nan, set result to nan to avoid division by zero
+        denom = mean_std_other.copy()
+        denom[denom == 0] = np.nan
+
+        d = (mean_g - mean_other) / denom
 
         pairwise_d.append(d)
-        pair_labels.append((BatchNames_map[g], 'Overall'))"""
+        pair_labels.append((BatchNames_map[g], 'all_data'))
 
-    # Convert to numpy array (shape: num_features x num_pairs) and transpose
-    
-    return np.array(pairwise_d), pair_labels
+    return np.vstack(pairwise_d), pair_labels
 
 # PC_Correlations performs PCA on data and computes Pearson correlation of the top N principal components with a batch variable.
 def PC_Correlations(
@@ -923,7 +926,18 @@ def Run_LMM_cross_sectional(Data, batch, covariates=None, feature_names=None, gr
     summary['n_features'] = p
     return results_df, summary
 
+"""
+"""
+###################################
+# FOR LONGITUDINAL DATA
+####################################
 
+import numpy as np
+import pandas as pd
+from scipy.stats import rankdata
+from typing import Sequence, Optional
+
+### This function was written by Jake not Gaurav, adapted from above so may be redundant 
 def Run_LMM_Longitudinal(Data, subject_ids, batch, covariates=None, feature_names=None,
                   subject_col_name='subject', batch_col_name='batch',
                   covariate_names=None, min_group_n=2, var_threshold=1e-8):
@@ -1005,17 +1019,6 @@ def Run_LMM_Longitudinal(Data, subject_ids, batch, covariates=None, feature_name
     summary['num_features_analyzed'] = p
 
     return results_df, summary
-"""
-"""
-###################################
-# FOR LONGITUDINAL DATA
-####################################
-
-import numpy as np
-import pandas as pd
-from scipy.stats import rankdata
-from typing import Sequence, Optional
-
 
 def _force_numeric_vector(series_like) -> np.ndarray:
     """Convert input to 1D float numpy array; non-convertible -> np.nan."""

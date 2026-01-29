@@ -24,49 +24,82 @@ If ComBat runs correctly, we should see no errors.
 
 """
 
+# Test combat
 
-import numpy as np
-from DiagnoseHarmonization import HarmonizationFunctions
+def test_ComBat_asarray():
+    # Import necessary libraries
+    import numpy as np
+    import pandas as pd
+    from DiagnoseHarmonization import HarmonizationFunctions
 
-# Simulate a small datset that is normally distributed
+    # Create array of random data as numpy array
+    np.random.seed(42)
+    n_features = 10
+    n_samples = 100
+    data = np.random.randn(n_features, n_samples)
+    # Add random batch effect:
+    batch = np.array(['batch1'] * 50 + ['batch2'] * 50)
+    # Add batch effect (simple mean shift for each batch)
+    data[:, :50] += 1*np.random.randint(1, 3, size=(n_features, 50))  # Batch 1 has a mean shift of +2
+    data[:, 50:] -= 1*np.random.randint(1, 3, size=(n_features, 50))  # Batch 2 has a mean shift of -2
+    # Create an array with covariates (age, sex)
+    age = np.random.randint(20, 60, size=n_samples)
+    sex = np.random.randint(0, 2, size=n_samples)
+    covariates = np.vstack((age, sex))
+    # Run ComBat
+    [corrected_data,a,b] = HarmonizationFunctions.combat(
+        data,
+        batch,
+        covariates.T,
+        parametric=True,
+        DeltaCorrection=True,
+        UseEB=True,
+        ReferenceBatch=None
+    )
+    # Check that the output has the same shape as the input
+    
+    assert corrected_data.shape == data.shape
 
-subject_data = np.random.normal(0, 1, (10, 20))  # 10 features, 20 samples
+# Repeat logic above but with pandas DataFrame input
+def test_ComBat_dataframe():
+    # Import necessary libraries
+    import numpy as np
+    import pandas as pd
+    from DiagnoseHarmonization import HarmonizationFunctions
 
-# Simulate a feature mean to be randomly distributed around 0, the standard deviation is 1 here due to the z-scoring of the data
-
-feature_mean = np.random.normal(0, 1, (10, 1))  # 10 features, 1 mean per feature
-
-# Simulate two covariates, one continuous (age) and one binary
-age = np.random.randint(50, 70, size=(20, 1))  # Continuous covariate (age)
-# Define a beta coefficient for age for each feature, this will be multiplied by mean centered age covariate
-beta_age = np.random.normal(0, 0.1, (10, 1))  # Small effect of age on each feature
-
-sex = np.random.randint(0, 2, size=(20, 1))  # Binary cov
-# Combine covariates into a design matrix
-covariates = np.column_stack((age, sex)) # Shape (20, 2)
-# Repeat above step for the sex coefficient, mean centering again to avoid intercept issues and multiply by 0
-beta_sex = np.random.normal(0, 0.1, (10, 1)) 
-
-# Simulate batch variable with two batches
-batch = np.array([0]*10 + [1]*10)  # 20 samples
-
-# Additive batch effect will be small and normally distributed
-gamma = np.random.normal(0, 0.5, (10, 1)) # Setting it to 0.5 means the worst effect causes the data to shift by 0.5 standard deviations
-
-# The delta batch effect is assumed to be from an inverse gamma distribution
-delta = np.random.uniform(0.5, 1.5, (10, 1)) # Setting it to between 0.5 and 1.5 means the random subject effect can be multipled between 0.5 and 1.5
-
-# Create the final dataset
-# Y = alpha + X*beta_age +X*beta_sex + gamma_batch + delta_batch*epsilon
-
-final_data = (subject_data * delta) + feature_mean + (beta_age @ (age - np.mean(age)).T) + (beta_sex @ (sex - np.mean(sex)).T) + gamma @ (batch - np.mean(batch)).reshape(1, -1)
-
-# Print the final dataset
-print("Final simulated dataset (features x samples):")
-print(final_data)
-
-# Apply ComBat
-# Transpose the data to match ComBat expectations (samples x features)
-
-harmonized_data, delta_star, gamma_star = HarmonizationFunctions.combat(final_data, batch, covariates, parametric=True, DeltaCorrection=True, UseEB=True, ReferenceBatch=None, RegressCovariates=False, GammaCorrection=True)
-print("Harmonized data (samples x features):")
+    # Create array of random data as pandas DataFrame
+    np.random.seed(42)
+    n_features = 10
+    n_samples = 100
+    data = pd.DataFrame(
+        np.random.randn(n_features, n_samples),
+        index=[f"feature_{i}" for i in range(n_features)],
+        columns=[f"sample_{i}" for i in range(n_samples)],
+    )
+    # Add random batch effect:
+    batch = pd.Series(['batch1'] * 50 + ['batch2'] * 50, index=data.columns)
+    # Add batch effect (simple mean shift for each batch)
+    data.iloc[:, :50] += 1*np.random.randint(1, 3, size=(n_features, 50))  # Batch 1 has a mean shift of +2
+    data.iloc[:, 50:] -= 1*np.random.randint(1, 3, size=(n_features, 50))  # Batch 2 has a mean shift of -2
+    # Create a DataFrame with covariates (age, sex)
+    age = np.random.randint(20, 60, size=n_samples) 
+    sex = np.random.randint(0, 2, size=n_samples)
+    covariates = pd.DataFrame(
+        {
+            "age": age,
+            "sex": sex,
+        },
+        index=data.columns,
+    )
+    # Run ComBat
+    [corrected_data,a,b] = HarmonizationFunctions.combat(
+        data,
+        batch,
+        covariates,
+        parametric=True,
+        DeltaCorrection=True,
+        UseEB=True,
+        ReferenceBatch=None
+    )
+    # Check that the output has the same shape as the input
+    assert corrected_data.shape == data.shape

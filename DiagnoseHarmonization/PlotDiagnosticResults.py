@@ -7,6 +7,7 @@
 import inspect
 from functools import wraps
 from typing import Any, Callable, List, Tuple, Optional
+import matplotlib
 import matplotlib.pyplot as plt
 import matplotlib.figure as mfig
 from scipy import stats
@@ -157,7 +158,6 @@ def Z_Score_Plot(data, batch, probablity_distribution=False,draw_PDF=True):
             batch = np.array(batch)
         else:
             raise ValueError("batch must be a NumPy array or a list.")
-    
     # Sort data by batch, batch can either be numeric or string labels here:
     sorted_indices = np.argsort(batch)
     sorted_data = data[sorted_indices, :]
@@ -167,41 +167,36 @@ def Z_Score_Plot(data, batch, probablity_distribution=False,draw_PDF=True):
     fig = plt.figure(figsize=(14, 8))
     # Loop over unique batches and plot as histogram on same axis:
     ax1 = fig.add_subplot()
+    import matplotlib
+    # Define colours for each histogram based on number of unique batches:
+    colors = matplotlib.pyplot.get_cmap('tab10', len(unique_batches))
+
     if probablity_distribution==True:
         plot_type = 'density'
     else:
         plot_type = 'frequency'
 
-
     for i in np.unique(batch):
         batch_data = data[batch == i, :].flatten()
-
-        ax1.hist(batch_data, bins=80, density=plot_type, alpha=0.5, label=str(i))
+        # Match colours of the histogram for each batch:
+        color = colors(np.where(unique_batches == i)[0][0])
+        ax1.hist(batch_data, bins=80, density=plot_type, alpha=0.5, label=str(i), color=color)
         # Draw an estimated normal distribution curve over histogram:
         if draw_PDF==True:
             mu, std = np.mean(batch_data), np.std(batch_data)
             xmin, xmax = ax1.get_xlim()
             x = np.linspace(xmin, xmax, 100)
-            p = stats.norm.pdf(x, mu, std)
-            ax1.plot(x, p, linewidth=2)
+            p = stats.norm.pdf(x, mu, std)            
+            ax1.plot(x, p, color=color, linewidth=2)
 
     ax1.set_xlabel("Z-scores of all unique measures")
+    # Set axis limits to -8 to 8 for better visualisation:
+    ax1.set_xlim([-8, 8])
     ax1.invert_xaxis()
     ax1.yaxis.tick_right()
     ax1.yaxis.set_label_position("right")
     ax1.legend(title="Batch")
-    fig2 = plt.figure(figsize=(14, 8))
-    ax2 = fig2.add_subplot()
-    im = ax2.imshow(sorted_data.T, aspect='auto', cmap='viridis', interpolation='nearest')
-    ax2.set_xlabel("Samples (sorted by batch)")
-    ax2.set_ylabel("Features")
-    ax2.set_title("Z-scored Data Heatmap")
-    # Add batch seperators:
-    batch_start = 0
-    for count in batch_counts:
-        batch_start += count
-        ax2.axvline(x=batch_start - 0.5, color='black', linestyle='--', linewidth=1)
-    fig.colorbar(im, ax=ax2, orientation='vertical', label='Z-score')
+
     figs = []
     figs.append(("Z-score histogram", fig))
     #figs.append(("Z-score heatmap", fig2))
@@ -354,10 +349,6 @@ def levenes_plot(
         levenes_results dict: pairlabels (batchwise), statistics, pvalues for each unique pair, statistic and pvalue are 1D arrays length of num_features"""
     figs = []
     return figs
-    
-
-
-
 
 """----------------------------------------------------------------------------------------------------------------------------"""
 """---------------------------------------- Plotting functions for PCA correlation results ----------------------------------"""
@@ -556,7 +547,7 @@ def PC_corr_plot(
 """----------------------------------------------------------------------------------------------------------------------------"""
 """---------------------------------------- Plotting functions for PCA clustering results ----------------------------------"""
 """----------------------------------------------------------------------------------------------------------------------------"""
-@rep_plot_wrapper
+@rep_plot_wrapper # This is redundant now so may remove at later date
 def pc_clustering_plot(
     PrincipleComponents,
     batch,
@@ -740,6 +731,273 @@ def pc_clustering_plot(
                 pass
 
     return figs
+
+"""----------------------------------------------------------------------------------------------------------------------------"""
+"""Plotting per batch variance across first N PCs"""
+"""----------------------------------------------------------------------------------------------------------------------------"""
+def plot_eigen_spectra_and_cumulative(
+    score: np.ndarray,
+    batch: np.ndarray,
+    rep,
+    max_components: int = 50,
+    caption_prefix: str = "PC spectrum",
+) -> dict[str, Any]:
+    """
+    Compute per-batch variance along PCs (scree / cumulative) and log plots to the report.
+
+    Args:
+        score: (n_samples, n_pcs) PCA score matrix returned by your PCA routine.
+        batch: (n_samples,) batch labels (numeric or strings).
+        rep: report object that has rep.log_plot(plt, caption=...) and rep.log_text(...)
+        max_components: maximum number of PCs to visualise (keeps plots cheap).
+        caption_prefix: prefix for plot captions.
+
+    Returns:
+        results dict containing:
+          - 'per_batch_variance': {batch_label: 1D-array length k of variances per PC}
+          - 'per_batch_frac_var': {batch_label: 1D-array length k of fraction variance (per-batch)}
+          - 'pcs_used': k
+    """
+    # Basic checks
+    if score.ndim != 2:
+        raise ValueError("score must be a 2D array (n_samples x n_pcs)")
+
+    n, n_pcs = score.shape
+    k = min(n_pcs, max_components)
+    if k < 2:
+        rep.log_text("Not enough PCs to produce spectrum plots (k < 2).")
+        return {}
+
+    unique_batches = np.unique(batch)
+    per_batch_variance = {}
+    per_batch_frac_var = {}
+
+    # Compute per-batch variance along each PC (diagonal / axis variances)
+    for b in unique_batches:
+        idx = np.where(batch == b)[0]
+        if len(idx) < 2:
+            # Variance undefined or uninformative
+            rep.log_text(f"Batch {b}: too few samples ({len(idx)}) to estimate per-PC variance reliably.")
+            per_batch_variance[b] = np.full(k, np.nan)
+            per_batch_frac_var[b] = np.full(k, np.nan)
+            continue
+        scores_b = score[idx, :k]
+        # ddof=1 to mirror sample covariance convention
+        var_b = np.nanvar(scores_b, axis=0, ddof=1)
+        total_var_b = np.nansum(var_b)
+        if total_var_b == 0 or np.isnan(total_var_b):
+            frac = np.full_like(var_b, np.nan)
+        else:
+            frac = var_b / total_var_b
+        per_batch_variance[b] = var_b
+        per_batch_frac_var[b] = frac
+
+    results = {
+        "pcs_used": k,
+        "per_batch_variance": per_batch_variance,
+        "per_batch_frac_var": per_batch_frac_var,
+    }
+
+        # --- One figure with two horizontally aligned subplots ---
+    fig, (ax1, ax2) = plt.subplots(
+        1, 2, figsize=(14, 4.5),
+        sharex=True
+    )
+
+    # --- Scree plot (fraction of variance per PC) ---
+    for b in unique_batches:
+        frac = per_batch_frac_var[b]
+        if np.all(np.isnan(frac)):
+            continue
+        ax1.plot(
+            np.arange(1, k + 1),
+            frac,
+            marker="o",
+            label=f"Batch {b}",
+            alpha=0.8
+        )
+
+    ax1.set_xlabel("PC index")
+    ax1.set_ylabel("Fraction variance (per-batch)")
+    ax1.set_title("Per-batch scree plot")
+    ax1.grid(axis="y", alpha=0.2)
+    ax1.legend(frameon=False, fontsize="small")
+
+    # --- Cumulative variance plot (per-batch) ---
+    for b in unique_batches:
+        frac = per_batch_frac_var[b]
+        if np.all(np.isnan(frac)):
+            continue
+        cum = np.nancumsum(frac)
+        ax2.plot(
+            np.arange(1, k + 1),
+            cum,
+            marker="o",
+            label=f"Batch {b}",
+            alpha=0.8
+        )
+
+    ax2.set_xlabel("PC index")
+    ax2.set_ylabel("Cumulative fraction variance")
+    ax2.set_title("Per-batch cumulative variance explained")
+    ax2.set_ylim(0, 1.05)
+    ax2.grid(axis="y", alpha=0.2)
+
+    plt.tight_layout()
+    rep.log_plot(
+        plt,
+        caption=f"{caption_prefix}: Per-batch scree + cumulative variance explained"
+    )
+    plt.close()
+
+    # short textual summary (helpful for users)
+    rep.log_text(
+        f"{caption_prefix}: Used first {k} PCs. "
+        "Scree and cumulative plots show how variance is distributed across PCs per batch."
+    )
+
+    return results
+"""----------------------------------------------------------------------------------------------------------------------------"""
+"""---------------------------------------- Plotting covariance Frobenius norm results ----------------------------------"""
+"""----------------------------------------------------------------------------------------------------------------------------"""
+
+def plot_covariance_frobenius(
+    score: np.ndarray,
+    batch: np.ndarray,
+    rep,
+    max_components: int = 50,
+    normalize: bool = True,
+    caption_prefix: str = "Covariance comparison (PC space)",
+) -> dict[str, Any]:
+    """
+    Compute pairwise Frobenius norms of covariance differences between batches using PC scores.
+
+    Args:
+        score: (n_samples, n_pcs) PCA score matrix.
+        batch: (n_samples,) batch labels.
+        rep: report object (must support rep.log_plot and rep.log_text).
+        max_components: number of PCs (k) to use for covariance estimation.
+        normalize: if True, divide pairwise norms by Frobenius norm of pooled covariance.
+        caption_prefix: prefix for plot captions.
+
+    Returns:
+        results dict containing:
+          - 'cov_matrices': {batch_label: k x k covariance matrix}
+          - 'pairwise_frobenius': DataFrame-like dict or 2D np.array of pairwise norms
+          - 'pairwise_frobenius_normalized': same but normalized (if normalize=True)
+          - 'pcs_used': k
+    """
+    import pandas as pd  
+
+    if score.ndim != 2:
+        raise ValueError("score must be a 2D array (n_samples x n_pcs)")
+
+    n, n_pcs = score.shape
+    k = min(n_pcs, max_components)
+    if k < 1:
+        rep.log_text("Not enough PCs to compute covariance diagnostics.")
+        return {}
+
+    unique_batches = np.unique(batch)
+    G = len(unique_batches)
+
+    cov_matrices = {}
+    valid_batches = []
+    for b in unique_batches:
+        idx = np.where(batch == b)[0]
+        if len(idx) < 2:
+            rep.log_text(f"Batch {b}: too few samples ({len(idx)}) to estimate covariance reliably.")
+            # store NaN matrix to preserve indexing
+            cov_matrices[b] = np.full((k, k), np.nan)
+            continue
+        scores_b = score[idx, :k]
+        cov_b = np.cov(scores_b, rowvar=False, ddof=1)  # k x k
+        cov_matrices[b] = cov_b
+        valid_batches.append(b)
+
+    # pooled covariance (using all samples)
+    pooled_scores = score[:, :k]
+    pooled_cov = np.cov(pooled_scores, rowvar=False, ddof=1)
+    pooled_frob = np.linalg.norm(pooled_cov, ord='fro')
+
+    # pairwise frobenius norms
+    pairwise = np.full((G, G), np.nan)
+    batch_list = list(unique_batches)
+    for i, bi in enumerate(batch_list):
+        for j, bj in enumerate(batch_list):
+            Ci = cov_matrices[bi]
+            Cj = cov_matrices[bj]
+            if np.isnan(Ci).all() or np.isnan(Cj).all():
+                pairwise[i, j] = np.nan
+            else:
+                diff = Ci - Cj
+                pairwise[i, j] = np.linalg.norm(diff, ord='fro')
+
+    # normalized version
+    pairwise_norm = pairwise.copy()
+    if normalize and pooled_frob > 0 and not np.isnan(pooled_frob):
+        pairwise_norm = pairwise / pooled_frob
+
+    # Turn results into a pandas DataFrame for nicer human-readable output if desired
+    try:
+        df_pairwise = pd.DataFrame(pairwise, index=batch_list, columns=batch_list)
+        df_pairwise_norm = pd.DataFrame(pairwise_norm, index=batch_list, columns=batch_list)
+    except Exception:
+        df_pairwise = pairwise
+        df_pairwise_norm = pairwise_norm
+
+    results = {
+        "pcs_used": k,
+        "cov_matrices": cov_matrices,
+        "pairwise_frobenius": df_pairwise,
+        "pairwise_frobenius_normalized": df_pairwise_norm,
+        "pooled_frobenius": pooled_frob,
+    }
+        # --- One figure with two horizontally aligned subplots ---
+    fig, (ax1, ax2) = plt.subplots(
+        1, 2, figsize=(14, 5),
+        gridspec_kw={"width_ratios": [3, 2]}
+    )
+
+    # --- Heatmap of normalized pairwise differences ---
+    im = ax1.imshow(pairwise_norm, interpolation="nearest", aspect="auto")
+
+    # Add value to each cell
+    for i in range(G):
+        for j in range(G):
+            val = pairwise_norm[i, j]
+            if not np.isnan(val):
+                ax1.text(j, i, f"{val:.2f}", ha="center", va="center", color="black")
+
+    cbar = fig.colorbar(im, ax=ax1, fraction=0.046, pad=0.04)
+    ax1.set_xticks(np.arange(G))
+    ax1.set_xticklabels(batch_list, rotation=45, ha="right")
+    ax1.set_yticks(np.arange(G))
+    ax1.set_yticklabels(batch_list)
+    ax1.set_title("Normalized Frobenius norm of covariance differences (PC space)")
+
+    # --- Bar plot: max per batch ---
+    max_per_batch = np.nanmax(pairwise_norm, axis=1)
+    ax2.bar(range(G), max_per_batch)
+    ax2.set_xticks(range(G))
+    ax2.set_xticklabels(batch_list, rotation=45, ha="right")
+    ax2.set_ylabel("Max normalized Frobenius distance")
+    ax2.set_title("Max covariance difference per batch (normalized)")
+
+    plt.tight_layout()
+
+    rep.log_plot(plt, caption=f"{caption_prefix}: Pairwise normalized Frobenius norms (heatmap)")
+    plt.close()
+
+    # --- Bar plot showing max difference per batch (summary) ---
+    # compute max distance from each batch to others
+
+    rep.log_text(
+        f"{caption_prefix}: used first {k} PCs. Pooled Frobenius norm = {pooled_frob:.4g}. "
+        "Pairwise normalized Frobenius matrix and per-batch summaries added to report."
+    )
+    return results
+
 """----------------------------------------------------------------------------------------------------------------------------"""
 """---------------------------------------- Plotting functions for Mahalanobis distance ----------------------------------"""
 """----------------------------------------------------------------------------------------------------------------------------"""

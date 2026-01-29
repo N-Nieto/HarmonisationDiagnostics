@@ -1,4 +1,5 @@
 # Diagnostic report generation using DiagnosticFunctions 
+from ensurepip import version
 import numpy as np
 import pandas as pd
 import os
@@ -10,6 +11,7 @@ from DiagnoseHarmonization import DiagnosticFunctions
 from DiagnoseHarmonization import PlotDiagnosticResults
 from DiagnoseHarmonization.LoggingTool import StatsReporter
 
+
 def CrossSectionalReport(
     data,
     batch,
@@ -18,6 +20,7 @@ def CrossSectionalReport(
     save_data: bool = False,
     save_data_name: str | None = None,
     save_dir: str | os.PathLike | None = None,
+    feature_names: list | None = None,
     report_name: str | None = None,
     SaveArtifacts: bool = False,
     rep= None,
@@ -47,7 +50,8 @@ def CrossSectionalReport(
         dict or None: If save_data is True, returns a dictionary of saved data arrays.
 
     """
-    
+
+
     # Check inputs and revert to defaults as needed
     if save_dir is None:
         save_dir = Path.cwd()
@@ -110,7 +114,12 @@ def CrossSectionalReport(
             f"Unique Covariates: {set(covariate_names) if covariate_names is not None else set()}\n"
             f"HTML report: {report.report_path}\n"
         )
-        report.text_simple(line_break_in_text)
+        # Print version info from _version.py
+        from DiagnoseHarmonization._version import version
+        report.log_text(f"DiagnoseHarmonization version: {version}")
+            
+        # Get todays date for saving results
+        report_date = datetime.now().date().isoformat()
 
         # Ensure batch is numeric array where needed
         logger.info("Checking data format")
@@ -124,22 +133,6 @@ def CrossSectionalReport(
                 # keep string labels in `batch` if plotting expects them; numeric conversions can be used inside tests as needed
         else:
             raise ValueError("Batch must be a list or numpy array")
-
-        # Prepare save-data dict if requested
-        if save_data:
-            data_dict = {}
-            data_dict["batch"] = batch
-            if covariates is not None:
-                for i in range(covariates.shape[1]):
-                    if covariate_names is not None and i < len(covariate_names):
-                        cov_name = covariate_names[i]
-                    else:
-                        cov_name = f"covariate_{i+1}"
-                    data_dict[cov_name] = covariates[:, i]
-            if save_data_name is None:
-                save_data_name = "DiagnosticReport_InputData.csv"
-        else:
-            data_dict = None
 
         # Samples per batch
         unique_batches, counts = np.unique(batch, return_counts=True)
@@ -181,7 +174,9 @@ def CrossSectionalReport(
             report.text_simple(f"Summary of Cohen's D results for batch comparison: {b1} vs {b2}")
             cohens_d_pair = cohens_d_results[i, :]
             if save_data:
+                data_dict = {}
                 data_dict[f"CohensD_{b1}_vs_{b2}"] = cohens_d_pair
+                
             small_effect = (np.abs(cohens_d_pair) < 0.2).sum()
             medium_effect = ((np.abs(cohens_d_pair) >= 0.2) & (np.abs(cohens_d_pair) < 0.5)).sum()
             large_effect = (np.abs(cohens_d_pair) >= 0.5).sum()
@@ -190,7 +185,14 @@ def CrossSectionalReport(
                 f"Number of features with medium effect size (0.2 <= |d| < 0.6): {medium_effect}\n"
                 f"Number of features with large effect size (|d| >= 0.6): {large_effect}\n"
             )
-
+        from DiagnoseHarmonization.SaveDiagnosticResults import save_test_results
+        save_test_results(data_dict,
+        test_name="Cohens_D",
+        save_root=save_dir,
+        feature_names=feature_names,
+        report_date=report_date
+        )
+        report.text_simple("Cohen's D test summaries added to report and saved as csv if requested")
         report.text_simple(line_break_in_text)
 
         # Mahalanobis
@@ -213,16 +215,21 @@ def CrossSectionalReport(
         centroid_resid_distance = mahalanobis_results.get("centroid_resid", {})
         for b, dist in centroid_resid_distance.items():
             report.text_simple(f"Mahalanobis distance of {b} to overall centroid after residualising by covariates: {dist:.4f}")
-
+        data_dict = {}
         if save_data:
             for b, dist in centroid_distances.items():
                 data_dict[f"Mahonalobis_Centroid_Batch{b}"] = dist
             for b, dist in centroid_resid_distance.items():
                 data_dict[f"Mahonalobis_Centroid_Resid_Batch{b}"] = dist
-
+        
+        save_test_results(data_dict,
+        test_name="Mahalanobis_Distance",
+        save_root=save_dir,
+        feature_names=feature_names,
+        report_date=report_date
+        )
+        report.text_simple("Mahalanobis distance test summaries added to report and saved as csv if requested")
         report.text_simple(line_break_in_text)
-
-
         # ---------------------
         # Mixed model tests
         # ---------------------
@@ -232,7 +239,7 @@ def CrossSectionalReport(
 
         # run LMM diagnostics
         lmm_results_df, lmm_summary = DiagnosticFunctions.Run_LMM_cross_sectional(data, batch, covariates=covariates,
-                                                feature_names=None,
+                                                feature_names=feature_names,
                                                 covariate_names=covariate_names,
                                                 min_group_n=2)
 
@@ -253,12 +260,20 @@ def CrossSectionalReport(
                 continue
             note_lines.append(f"{tag}: {count}")
         report.text_simple("LMM diagnostics notes (top):\n" + "\n".join(note_lines))
-
+        data_dict = {}
         # Save DF if needed
         if save_data:
             data_dict['LMM_results_df'] = lmm_results_df
             data_dict['LMM_summary'] = lmm_summary
         
+        # Save LMM results as csv
+        save_test_results(data_dict,
+        test_name="LMM_Results",
+        save_root=save_dir,
+        feature_names=feature_names,
+        report_date=report_date
+        )
+
         report.text_simple("Histogram of ICC (proportion of variance explained by batch):")
         # How to interpret ICC:
         report.text_simple("Intraclass Correlation Coefficient (ICC) is the ratio of variance due to batch effects to the total variance (batch + residual). \n" 
@@ -273,24 +288,18 @@ def CrossSectionalReport(
         try:
             icc_nonan = lmm_results_df['ICC'].dropna()
             if len(icc_nonan) > 0:
-                plt.figure(figsize=(6, 3))
-                plt.hist(icc_nonan, bins=30)
-                plt.title("Distribution of ICC across features")
-                report.log_plot(plt, caption="Histogram of ICC (batch variance proportion)")
+                plt.figure(figsize=(10, 4))
+                plt.bar(range(len(icc_nonan)), icc_nonan)
+                plt.xlabel("Feature index")
+                plt.ylabel("ICC")
+                plt.title("ICC values per feature")
+                report.log_plot(plt, caption="ICC values per feature")
                 plt.close()
+
         except Exception:
             logger.exception("Could not produce ICC histogram")
 
-        # Plot ICC per feature, use simple bar plot for now, replace with plotting functions at later date:
-        if len(icc_nonan) > 0:
-            plt.figure(figsize=(10, 4))
-            plt.bar(range(len(icc_nonan)), icc_nonan)
-            plt.xlabel("Feature index")
-            plt.ylabel("ICC")
-            plt.title("ICC values per feature")
-            report.log_plot(plt, caption="ICC values per feature")
-            plt.close()
-
+        
         # Plot conditional and marginal R^2 per feature, indicate what each means for interpretation
         report.text_simple("Marginal R² represents the variance explained by fixed effects (covariates)\n"
                            "while Conditional R² represents the variance explained by both fixed and random effects (batch + covariates).")
@@ -331,6 +340,16 @@ def CrossSectionalReport(
         labels = [f"Batch {b1} vs Batch {b2}" for (b1, b2) in variance_ratio.keys()]
         ratio_array = np.array(list(variance_ratio.values()))
 
+        # save variance ratios raw:
+        if save_data:
+            save_test_results(variance_ratio,
+                test_name="Variance_Ratios_Raw",
+                save_root=save_dir,
+                feature_names=feature_names,
+                report_date=report_date
+            )
+        # Summarise variance ratio results
+        data_dict = {}
         summary_rows = []
         for (b1, b2), ratios in variance_ratio.items():
             ratios = np.array(ratios)
@@ -352,28 +371,36 @@ def CrossSectionalReport(
                 "Median ratio (exp)": median_ratio,
                 "Mean ratio (exp)": mean_ratio,
             })
-            if save_data:
-                data_dict[f"VarianceRatio_Batch{b1}_vs_Batch{b2}"] = ratios
-                data_dict[f"MedianLogVarianceRatio_Batch{b1}_vs_Batch{b2}"] = median_log
-                data_dict[f"MeanLogVarianceRatio_Batch{b1}_vs_Batch{b2}"] = mean_log
-                data_dict[f"IQRLowerLogVarianceRatio_Batch{b1}_vs_Batch{b2}"] = iqr_log[0]
-                data_dict[f"IQRUpperLogVarianceRatio_Batch{b1}_vs_Batch{b2}"] = iqr_log[1]
-                data_dict[f"PropHigherLogVarianceRatio_Batch{b1}_vs_Batch{b2}"] = prop_higher
-                data_dict[f"MedianVarianceRatioExp_Batch{b1}_vs_Batch{b2}"] = median_ratio
-                data_dict[f"MeanVarianceRatioExp_Batch{b1}_vs_Batch{b2}"] = mean_ratio
+            data_dict[f"VarianceRatio_Batch{b1}_vs_Batch{b2}"] = ratios
+            data_dict[f"MedianLogVarianceRatio_Batch{b1}_vs_Batch{b2}"] = median_log
+            data_dict[f"MeanLogVarianceRatio_Batch{b1}_vs_Batch{b2}"] = mean_log
+            data_dict[f"IQRLowerLogVarianceRatio_Batch{b1}_vs_Batch{b2}"] = iqr_log[0]
+            data_dict[f"IQRUpperLogVarianceRatio_Batch{b1}_vs_Batch{b2}"] = iqr_log[1]
+            data_dict[f"PropHigherLogVarianceRatio_Batch{b1}_vs_Batch{b2}"] = prop_higher
+            data_dict[f"MedianVarianceRatioExp_Batch{b1}_vs_Batch{b2}"] = median_ratio
+            data_dict[f"MeanVarianceRatioExp_Batch{b1}_vs_Batch{b2}"] = mean_ratio
 
-            logger.info(
+            report.text_simple(
                 f"Variance ratio {b1} vs {b2}: median log={median_log:.3f} "
                 f"(IQR {iqr_log[0]:.3f}–{iqr_log[1]:.3f}), "
                 f"{prop_higher*100:.1f}% of features higher in batch {b1}"
             )
-
+        
+        # Save summary as well
+        if save_data:
+            save_test_results(data_dict,
+                test_name="Variance_Ratio_Summary",
+                save_root=save_dir,
+                feature_names=feature_names,
+                report_date=report_date
+            )
+        
         summary_df = pd.DataFrame(summary_rows)
+        report.text_simple("Variance ratio test summaries (per batch pair):")
         PlotDiagnosticResults.variance_ratio_plot(ratio_array, labels, rep=report)
         report.log_text("Variance ratio plot(s) added to report")
     
         report.text_simple(line_break_in_text)
-
         # ---------------------
         # PCA and clustering
         # ---------------------
@@ -396,41 +423,57 @@ def CrossSectionalReport(
         report.text_simple("Returning correlations of covariates and batch with first four PC's")
         report.text_simple("Returning scatter plots of first two PC's, grouped/coloured by:")
         report.log_text(f"Variable names used in PCA correlation plots and PC1 vs PC2 plot: {covariate_names}")
-
+    
         PlotDiagnosticResults.PC_corr_plot(
             score, batch, covariates=covariates, variable_names=covariate_names,
             PC_correlations=True, rep=report, show=False
         )
         report.log_text("PCA correlation plot added to report")
 
-        # Clustering diagnostics (if enough samples)
-        n_samples = data.shape[0]
-        n_clusters = len(np.unique(batch))
-        if n_samples >= n_clusters + 1:
-            cumulative_variance = np.cumsum(explained_variance)
-            n_pcs_for_clustering = np.searchsorted(cumulative_variance, 70) + 1
-            if n_pcs_for_clustering < 2:
-                n_pcs_for_clustering = 2
-            logger.info(f"Number of PCs to explain 70% variance: {n_pcs_for_clustering}")
-            n_clusters_for_kmeans = unique_batches.shape[0]
-            PlotDiagnosticResults.pc_clustering_plot(
-                PrincipleComponents=score,
-                batch=batch,
-                covariates=covariates,
-                variable_names=covariate_names,
-                n_pcs_for_clustering=n_pcs_for_clustering,
-                n_clusters_for_kmeans=n_clusters_for_kmeans,
-                rep=report,
-                random_state=0,
-                show=False,
-            )
-            report.log_text("Clustering diagnostics plot added to report")
-        else:
-            logger.warning("Dataset size insufficient for clustering diagnostics, skipping K-means clustering")
-            report.log_text("Clustering diagnostics skipped due to insufficient dataset size")
 
+
+        explained_variance, score, batchPCcorr, pca = DiagnosticFunctions.PC_Correlations(
+            data, batch,N_components=20, covariates=covariates, variable_names=variable_names
+        )
+        data_dict = {}
+        # save just the scores, not the full PCA object
+        # Give each PC a name like PC1, PC2, ... as is more intuitive
+        if save_data:
+            n_pcs = score.shape[1]
+            for pc_idx in range(n_pcs):
+                pc_name = f"PC{pc_idx + 1}"    
+                data_dict[pc_name] = score[:, pc_idx]
+            # Create dummy index to replace feature names as in the dictionary, each PC is length of subjects:
+            feature_names = [f"Feature_{idx+1}" for idx in range(n_pcs)]
+
+            save_test_results(data_dict,
+                test_name="PCA_Scores",
+                save_root=save_dir,
+                feature_names=feature_names,
+                report_date=report_date
+            )
+
+        report.log_section("Eigenvalue_Scree", "PCA Eigenvalues and Covariance Structure")  
+        report.text_simple("Using the computed PCA from earlier, visualise the eigenvalues associated with each principal component (PC) \n")
+        report.text_simple("Display as an Eigenvalue Spectrum comparisson across batches and display Fronenius norm of the covariance matrices across batches \n")
         report.text_simple(line_break_in_text)
 
+        logger.info("Generating PCA Eigenvalue Scree Plot:")
+        report.text_simple("The scree plot displays the eigenvalues associated with each principal component (PC). \n")
+        report.text_simple("Using this test, we can see if the variance by batch is the same across all PCs \n")
+        report.text_simple("In short, the steepness and shape of the batchwise plots can help to differ batchwise differences in the variance structure across features \n")
+        spectra_res = PlotDiagnosticResults.plot_eigen_spectra_and_cumulative(score, batch, rep=report)
+        logger.info("PCA Eigenvalue Scree Plot added to report")
+        report.text_simple(line_break_in_text)
+
+        logger.info("Generating PCA Frobenius Norm Plot")
+        report.text_simple("The Frobenius norm plot displays the pairwise Frobenius norms of the covariance matrices between batches. \n")
+        report.text_simple("Using this test, we can see if the covariance structure by batch is the same across all batches \n")
+        report.text_simple("In short, larger Frobenius norms between batches indicate greater differences in covariance structure across features \n")
+        covres = PlotDiagnosticResults.plot_covariance_frobenius(score, batch, rep=report)
+        logger.info("PCA Frobenius norm plot added to report")
+        report.text_simple(line_break_in_text)
+    
         # ---------------------
         # Distribution tests (KS)
         # ---------------------
@@ -459,6 +502,13 @@ def CrossSectionalReport(
                     data_dict[f"KS_PValue_{key}"] = value["p_value"]
                     if value.get("p_value_fdr") is not None:
                         data_dict[f"KS_PValueFDR_{key}"] = value["p_value_fdr"]
+                    
+            save_test_results(data_dict,
+                test_name="KS_Test",
+                save_root=save_dir,
+                feature_names=feature_names,
+                report_date=report_date
+            )
 
         PlotDiagnosticResults.KS_plot(ks_results, rep=report)
         report.log_text("Two-sample Kolmogorov-Smirnov test plot added to report")
@@ -467,17 +517,7 @@ def CrossSectionalReport(
         logger.info("Diagnostic tests completed")
         logger.info(f"Report saved to: {report.report_path}")
 
-        # Save data dictionary as csv if requested
-        if save_data and data_dict is not None:
-            import csv
-            csv_path = os.path.join(save_dir, save_data_name)
-            # If data_dict values are arrays, convert to something writable - here we write a single-row dict with lists/stringified arrays
-            serializable = {k: (v.tolist() if hasattr(v, "tolist") else v) for k, v in data_dict.items()}
-            with open(csv_path, "w", newline="") as csvfile:
-                writer = csv.DictWriter(csvfile, fieldnames=list(serializable.keys()))
-                writer.writeheader()
-                writer.writerow(serializable)
-        
+        # Save data dictionary as csv if requested 
         report.log_section("Summary","Summary of Diagnostic Report and Advice")
 
         # Report the major findings in brief and provide advice on harmonisation method to apply in this context
@@ -503,7 +543,6 @@ def CrossSectionalReport(
         if created_local_report:
             # call __exit__ on the context-managed report
             report_ctx.__exit__(None, None, None)  
-
 
 def LongitudinalReport(data, batch, subject_ids, timepoints, features, covariates=None,
                        covariate_names=None,
@@ -601,6 +640,7 @@ def LongitudinalReport(data, batch, subject_ids, timepoints, features, covariate
             f"Number of measures: {data.shape[0]}\n"
             f"Unique subjects: {len(set(subject_ids))}\n"
             f"Number of features: {data.shape[1]}\n"
+            f"Number of timepoints: {len(set(timepoints))}\n"
             f"Unique batches: {set(batch)}\n"
             f"Unique Covariates: {set(covariate_names) if covariate_names is not None else set()}\n"
             f"HTML report: {report.report_path}\n"
@@ -670,6 +710,7 @@ def LongitudinalReport(data, batch, subject_ids, timepoints, features, covariate
         report.log_section("subject_order_consistency", "Subject Order Consistency Analysis")
         logger.info("PLACEHOLDER TO TEST SECTION CREATION AND PLOTTING!")
         # Subject order consistency
+
         results = DiagnosticFunctions.evaluate_pairwise_spearman(
             idp_matrix=data,
             subjects=subject_ids,
@@ -682,6 +723,7 @@ def LongitudinalReport(data, batch, subject_ids, timepoints, features, covariate
 
         PlotDiagnosticResults.plot_pairwise_spearman_combined(all_results, save_dir, rep=report)
         report.log_text("Subject order consistency plot added to report")
+        report.text_simple("Ran spearmans c")
 
         # Finalize
         logger.info("Diagnostic tests completed")

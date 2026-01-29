@@ -23,7 +23,7 @@ def test_full_pipeline_generates_report(tmp_path = save_dir):
     # Prepare synthetic data
     # -------------------------
     np.random.seed(27)
-    n_samples = 80
+    n_samples = 800
     n_features = 100
 
     data = np.random.randn(n_samples, n_features)
@@ -31,7 +31,7 @@ def test_full_pipeline_generates_report(tmp_path = save_dir):
     print( covariate_cat)
     # Mean center the categorical covariate, testing this as divide by zero errors in PCA correlations otherwise
     covariate_cat = covariate_cat - np.mean(covariate_cat) 
-    batch = np.array(["Siemens"] * 20 + ["Philips"] * 20  + ["GE"] * 20  + ["Magnetom"] * 20 )
+    batch = np.array(["Siemens"] * int(n_samples/2) + ["Philips"] * int(n_samples/8)  + ["GE"] * int(n_samples/8)  + ["Magnetom"] * int(n_samples/4) )
 
     # Construct mixed effects model to add some batch and covariate effects
     # Define age between 20 and 80 from normal distribution
@@ -85,7 +85,7 @@ def test_full_pipeline_generates_report(tmp_path = save_dir):
                             save_dir=str(out_dir), # Optional: directory to save report
                             save_data=True, # Whether to save data used in report, default False
                                 report_name=Report_name, # Optional: base name of report file
-                                SaveArtifacts=True, # Whether to save artifacts, default False
+                                SaveArtifacts=False, # Whether to save artifacts, default False
                                     rep=None, # Optional: report object
                                         show=False, # Whether to display the report, default False
                                         timestamped_reports=timestamped_reports # Whether to use timestamped report names
