@@ -144,7 +144,6 @@ def combat_temp_for_covbat(data, batch, model=None, numerical_covariates=None, e
  
     return bayesdata
 
-
 def design_mat(mod, numerical_covariates, batch_levels):
     # require levels to make sure they are in the same order as we use in the
     # rest of the script.
@@ -236,7 +235,7 @@ def adjust_nums(numerical_covariates, drop_idxs):
 # Define ComBat harmonization function
 def combat(data, batch, mod, parametric,
            DeltaCorrection=True, UseEB=True, ReferenceBatch=None,
-           RegressCovariates=False, GammaCorrection=True):
+           RegressCovariates=False, GammaCorrection=True, covbat_mode=False):
     """
     Run ComBat harmonization on the data and return the harmonized data.
 
@@ -247,7 +246,9 @@ def combat(data, batch, mod, parametric,
 
     Note: helper functions aprior, bprior, itSol must be defined in scope.
     """
-
+    import pandas as pd
+    import numpy as np
+    
     # Remember whether inputs were pandas objects so we can restore types/labels on output
     dat_was_df = isinstance(data, pd.DataFrame)
     batch_was_series = isinstance(batch, (pd.Series, pd.Index))
@@ -543,16 +544,13 @@ def combat(data, batch, mod, parametric,
         delta_star = delta_hat.copy()
 
     print('Size of gamma_star:', gamma_star.shape)
+    bayesdata = s_data.copy()
+
 
     if not UseEB:
         print('Discounting the EB adjustments and using Raw estimates, this is not advised')
         delta_star = delta_hat.copy()
         gamma_star = gamma_hat.copy()
-
-    # Apply the L/S adjustments to the standardized data
-    print('[combat] Adjusting the Data')
-    bayesdata = s_data.copy()
-
     if DeltaCorrection:
         if GammaCorrection:
             for i in range(n_batch):
@@ -575,6 +573,104 @@ def combat(data, batch, mod, parametric,
                 bayesdata[:, indices] = (bayesdata[:, indices] - (gamma_star[i, :])[:, None])
         else:
             print('Warning: Both Gamma and delta have been set to false, no ComBat adjustments have been applied')
+    if covbat_mode:
+        import numpy as np
+        from sklearn.preprocessing import StandardScaler
+        from sklearn.decomposition import PCA
+
+        # --- assume these are provided:
+        # bayesdata : numpy array shape (n_features, n_samples)
+        # batch : whatever your function needs
+        # stand_mean : either shape (n_features,) or (n_features, 1)
+        # data (optional) : original pandas DataFrame if you want to keep sample names
+        # combat_temp_for_covbat : your function (may accept numpy or pandas)
+
+        # Optional: keep sample names in an array if you still want them
+        # If you don't have `data`, just omit this.
+        try:
+            sample_names = np.asarray(data.columns)
+        except Exception:
+            sample_names = None
+
+        print('[covbat] Adjusting the Data')
+
+        # CovBat adjustment via PCA
+        comdata = bayesdata.T                      # shape: (n_samples, n_features)
+        bmu = np.mean(comdata, axis=0)             # mean across samples -> shape (n_features,)
+
+        # standardize data before PCA
+        scaler = StandardScaler()
+        comdata_std = scaler.fit_transform(comdata)  # (n_samples, n_features)
+
+        pca = PCA()
+        pca.fit(comdata_std)
+        pc_comp = pca.components_                    # (n_components, n_features)
+
+        # full_scores as numpy array: shape (n_components, n_samples)
+        full_scores = pca.transform(comdata_std).T   # pca.transform -> (n_samples, n_components) -> .T -> (n_components, n_samples)
+
+        # If you relied on DataFrame columns for ordering, sample_names preserves that:
+        # full_scores[:, i] corresponds to sample i in sample_names (if sample_names is provided)
+
+        # Hard code pct_var for now:
+        pct_var = 0.95
+        var_exp = np.cumsum(np.round(pca.explained_variance_ratio_, decimals=4))
+        # npc: number of PCs needed to exceed pct_var
+        npc = int(np.min(np.where(var_exp > pct_var))) + 1
+
+        # slice the scores to the first npc components
+        scores = full_scores[:npc, :]               # shape (npc, n_samples)
+
+        # If combat_temp_for_covbat accepts numpy arrays, call directly:
+        try:
+            scores_com = combat(scores, batch, mod=[], eb=False)
+        except TypeError:
+            # If it expects a pandas DataFrame, convert temporarily:
+            import pandas as pd
+            if sample_names is not None:
+                df_scores = pd.DataFrame(scores.T, columns=[f'PC{i}' for i in range(scores.shape[0])])  # shape (n_samples, npc)
+                # transpose so columns are PCs if function expects that layout; adapt as required by your function
+                # many functions expect samples in rows; adjust accordingly
+                df_scores = df_scores.T  # back to (npc, n_samples) if needed by your function
+            else:
+                df_scores = pd.DataFrame(scores)  # fallback
+            df_scores_out = combat_temp_for_covbat(df_scores, batch, model=None, eb=False)
+            # convert back to numpy if function returned DataFrame
+            if isinstance(df_scores_out, pd.DataFrame):
+                # ensure shape matches (npc, n_samples)
+                scores_com = df_scores_out.values
+            else:
+                scores_com = np.asarray(df_scores_out)
+
+        # put adjusted scores back into full_scores
+        full_scores[:npc, :] = scores_com
+
+        # prepare output array (same shape as bayesdata)
+        x_covbat = np.zeros_like(bayesdata)         # shape (n_features, n_samples)
+
+        # project back to original space
+        # full_scores.T shape (n_samples, n_components)
+        # pc_comp shape (n_components, n_features)
+        # np.dot -> (n_samples, n_features) -> .T -> (n_features, n_samples)
+        proj = np.dot(full_scores.T, pc_comp).T     # shape (n_features, n_samples)
+
+        # inverse transform the standardization
+        # scaler was fit on comdata (n_samples, n_features) so we need to pass proj.T (n_samples, n_features)
+        x_recon = scaler.inverse_transform(proj.T).T  # back to shape (n_features, n_samples)
+
+        # add reconstructed signal and the stored mean (stand_mean)
+        x_covbat += x_recon
+
+        # ensure stand_mean broadcasts across columns: make it (n_features, 1) if it's (n_features,)
+        stand_mean_arr = np.asarray(stand_mean)
+        if stand_mean_arr.ndim == 1:
+            stand_mean_arr = stand_mean_arr.reshape(-1, 1)   # (n_features, 1)
+
+        x_covbat += stand_mean_arr    # broadcasting across columns
+
+        # final output
+        bayesdata = x_covbat.copy()
+        print('[covbat] Finished CovBat adjustment')
 
     # Transform data back to original scale
     if RegressCovariates:
@@ -595,6 +691,7 @@ def combat(data, batch, mod, parametric,
 
     # Otherwise return numpy arrays (as before)
     return bayesdata, delta_star, gamma_star
+
 # Define CovBat harmonization function: from Chen et al. 2022
 def covbat(data, batch, model=None, numerical_covariates=None, pct_var=0.95, n_pc=0):
 
@@ -652,7 +749,7 @@ def covbat(data, batch, model=None, numerical_covariates=None, pct_var=0.95, n_p
 
     design = design_mat(model, numerical_covariates, batch_levels)
 
-    sys.stderr.write("Standardizing Data across genes.\n")
+    sys.stderr.write("Standardizing Data across features.\n")
     B_hat = np.dot(np.dot(la.inv(np.dot(design.T, design)), design.T), data.T)
     grand_mean = np.dot((n_batches / n_array).T, B_hat[:n_batch,:])
     var_pooled = np.dot(((data - np.dot(design, B_hat).T)**2), np.ones((int(n_array), 1)) / int(n_array))
