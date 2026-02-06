@@ -162,7 +162,7 @@ def CrossSectionalReport(
         # ---------------------
         report.log_section("cohens_d", "Cohen's D test for mean differences")
         logger.info("Cohen's D test for mean differences")
-        cohens_d_results, pairlabels = DiagnosticFunctions.Cohens_D(data, batch)
+        cohens_d_results, pairlabels = DiagnosticFunctions.Cohens_D(data, batch,covariates=covariates)
         report.text_simple("Cohen's D test for mean differences completed")
 
         # Plot (PlotDiagnosticResults should call rep.log_plot internally; our report.log_section ensures plots are attached)
@@ -435,11 +435,13 @@ def CrossSectionalReport(
         )
         report.log_text("PCA correlation plot added to report")
 
-
-
+        # Demean the data before PCA to avoid mean differences dominating first PC (i.e don't force PC'S > 1 to be orthogonal to mean)
+        #data_demeaned = data - np.mean(data, axis=0)
         explained_variance, score, batchPCcorr, pca = DiagnosticFunctions.PC_Correlations(
             data, batch,N_components=20, covariates=covariates, variable_names=variable_names
         )
+
+
         data_dict = {}
         # save just the scores, not the full PCA object
         # Give each PC a name like PC1, PC2, ... as is more intuitive
@@ -452,7 +454,7 @@ def CrossSectionalReport(
             feature_names = [f"Feature_{idx+1}" for idx in range(n_pcs)]
 
             save_test_results(data_dict,
-                test_name="PCA_Scores",
+                test_name="PCA_Scores_demeaned",
                 save_root=save_dir,
                 feature_names=feature_names,
                 report_date=report_date,
@@ -551,16 +553,21 @@ def CrossSectionalReport(
             # call __exit__ on the context-managed report
             report_ctx.__exit__(None, None, None)  
 
-def LongitudinalReport(data, batch, subject_ids, timepoints, features, covariates=None,
-                       covariate_names=None,
-                       save_data: bool = False,
-                       save_data_name: str | None = None,
-                       save_dir: str | os.PathLike | None = None,
-                       report_name: str | None = None,
-                       SaveArtifacts: bool = False,
-                       rep= None,
-                       show: bool = False,
-                       timestamped_reports: bool = True):
+from typing import Optional, Union
+def LongitudinalReport(data, batch,
+                          subject_ids,
+                          timepoints,
+                          covariates=None,
+                          covariate_names=None,
+                          features = None,
+                          save_data: bool = False,
+                          save_data_name: Optional[str]= None,
+                          save_dir: Optional[Union[str,os.PathLike]] = None,
+                          report_name: Optional[str] = None,
+                          SaveArtifacts: bool = False,
+                          rep= None,
+                          show: bool = False,
+                          timestamped_reports: bool = True):
     """
     Create a diagnostic report for dataset differences across batches in longitudinal data.
 
@@ -584,7 +591,7 @@ def LongitudinalReport(data, batch, subject_ids, timepoints, features, covariate
         If SaveArtifacts is True, saves intermediate plots to `save_dir`.
     
     """
-
+    from pprint import pformat
 
     # Check inputs and revert to defaults as needed 
 
@@ -647,7 +654,6 @@ def LongitudinalReport(data, batch, subject_ids, timepoints, features, covariate
             f"Number of measures: {data.shape[0]}\n"
             f"Unique subjects: {len(set(subject_ids))}\n"
             f"Number of features: {data.shape[1]}\n"
-            f"Number of timepoints: {len(set(timepoints))}\n"
             f"Unique batches: {set(batch)}\n"
             f"Unique Covariates: {set(covariate_names) if covariate_names is not None else set()}\n"
             f"HTML report: {report.report_path}\n"
@@ -667,16 +673,23 @@ def LongitudinalReport(data, batch, subject_ids, timepoints, features, covariate
         else:
             raise ValueError("Batch must be a list or numpy array")
         
+        
         # Check that covariates are an array if provided (.shape[1] throwing error with a list), convert to array if needed
         if covariates is not None:
             if isinstance(covariates, list):
                 covariates = np.array(covariates)
+            elif isinstance(covariates, dict):
+                pass
             elif not isinstance(covariates, np.ndarray):
-                raise ValueError("Covariates must be a numpy array or list if provided")
-        
+                raise ValueError(f"Covariates must be a numpy array or list if provided, covariates type: {type(covariates)}")
+
+                    
         # Check if there is only one covariate and convert to 2D array if that is the case (avoid shape issue in next call):
-        if covariates is not None and len(covariates.shape) == 1:
-            covariates = covariates.reshape(-1, 1)
+        try:
+            if covariates is not None and covariates.ndim == 1:
+                covariates = covariates.reshape(-1, 1)
+        except AttributeError:
+            pass
 
         # Prepare save-data dict if requested
         if save_data:
@@ -694,12 +707,12 @@ def LongitudinalReport(data, batch, subject_ids, timepoints, features, covariate
         else:
             data_dict = None
         # Check batch, subject_ids, and data dimensions
-        if not (len(batch) == len(subject_ids) == data.shape[0]):
-            raise ValueError("Length of batch and subject_ids must match number of samples in data")
-        if len(covariates) is not None and len(covariates) != data.shape[0]:
-            raise ValueError("Number of rows in covariates must match number of samples in data")
-        if len(covariate_names) is not None and len(covariate_names) != covariates.shape[1]:
-            raise ValueError("Length of covariate_names must match number of columns in covariates")
+        #if not (len(batch) == len(subject_ids) == data.shape[0]):
+        #    raise ValueError("Length of batch and subject_ids must match number of samples in data")
+        #if len(covariates) is not None and len(covariates) != data.shape[0]:
+        #    raise ValueError("Number of rows in covariates must match number of samples in data")
+        #if len(covariate_names) is not None and len(covariate_names) != covariates.shape[1]:
+        #    raise ValueError("Length of covariate_names must match number of columns in covariates")
         
 
         report.log_section("Introduction", "Longitudinal Data Diagnostic Report Introduction")
@@ -708,33 +721,206 @@ def LongitudinalReport(data, batch, subject_ids, timepoints, features, covariate
             "Longitudinal data involves repeated measurements from the same subjects over time, which introduces "
             "additional considerations for batch effects and variability. "
             "The following diagnostics will be performed:\n"
-            "Mixed effects model with a subject-specific random term to show the additive effect,\n" \
-            " A batch-wise variance comparison for the scaling effect,\n" \
-            " Within-subject variability (coefficient of variation, percentage difference),\n" \
-            " Subject order consistency across subjects and batches (Spearman correlation),\n" \
-            " Cross-subject variability and preservation of biological effects (e.g., age, diagnosis, etc.). "
+            "Subject-level variability - subject order consistency, within subject variability,\n" \
+            " Batch-level variability - additive, pairwise, multivariate and multiplicative batch effects \n" \
+            " Across-subject level variability - ICC, within/between subject variability,\n" \
+            " Biological variability (e.g., age). "
     )
-        report.log_section("subject_order_consistency", "Subject Order Consistency Analysis")
-        logger.info("PLACEHOLDER TO TEST SECTION CREATION AND PLOTTING!")
-        # Subject order consistency
+        report.log_section("subject_order_consistency", "Subject-level variability: Subject Order Consistency analysis")
+        report.log_text("Computing Spearman rank correlation between the timepoints")
 
-        results = DiagnosticFunctions.evaluate_pairwise_spearman(
+        # Subject-level: Subject order consistency
+        subjorder = DiagnosticFunctions.SubjectOrder_long(idp_matrix=data,
+                                                          subjects=subject_ids,
+                                                          timepoints=timepoints,
+                                                          idp_names=features,
+                                                          nPerm=100)
+        print("\nSUBJECT ORDER CONSISTENCY: RANK CORRELATIONS WITH PERMUTATION TESTS")
+        print(subjorder)
+        PlotDiagnosticResults.plot_SubjectOrder(subjorder,                 
+                              ncols=2,
+                              figsize_per_plot=(3.6,3.6),
+                              limit_idps=None,
+                              sample_method='random',
+                              random_state=42,
+                              rep=report) 
+        report.log_text("Subject order consistency plot added to report")
+
+        # Subject-level: Within Subject Consistency 
+        report.log_section("Within_subject_variability", "Subject-level variability: Within-subject variability analysis")
+        report.log_text("Computing IDP variation within subject (Coefficient or variation OR relative difference if two timepoints)")
+        wsv = DiagnosticFunctions.WithinSubjVar_long(
             idp_matrix=data,
             subjects=subject_ids,
             timepoints=timepoints,
             idp_names=features,
-            nPerm=1000,
-            seed=0,
-        )
-        all_results = [("subjectconsistency", {"pairwise_spearman": results})]    
+                          )
+        print("\nWITHIN SUBJECT VARIABILITY: BETWEEN TIMEPOINTS")
+        print(wsv)
+        PlotDiagnosticResults.plot_WithinSubjVar(
+            wsv,
+            subject_col='subject',
+            limit_subjects=20,
+            limit_idps_for_legend=10,
+            rep=report
+            )
+        report.log_text("Within subject variability plot added to report")
 
-        PlotDiagnosticResults.plot_pairwise_spearman_combined(all_results, save_dir, rep=report)
-        report.log_text("Subject order consistency plot added to report")
-        report.text_simple("Ran spearmans c")
+         # Batch-level: Additive batch effects
+        report.log_section("Additive batch effects using Mixed effect models", "Batch variability (Univariate): Batch effect analysis (mean comparison)")
+        report.log_text(pformat("Outputs p-values from additive tests by testing whether the average value of a IDP differs across batches, after accounting for subject effects and other covariates",width=90, sort_dicts=False))
+        addeff,model_defs_add = DiagnosticFunctions.AdditiveEffect_long(
+            idp_matrix=data,
+            subjects=subject_ids,
+            timepoints=timepoints,
+            batch_name=batch,
+            idp_names=features,
+            covariates=covariates,
+            #fix_eff=["age", "sex"],   # fixed effects
+            #ran_eff=["subjects"],            # random intercepts
+            do_zscore=True,                  # z-score predictors AND response per feature
+            reml=False,
+            verbose=True)
+        print("\nRESULTS: ADDITIVE EFFECTS")
+        print(addeff)
+        report.log_text(pformat(model_defs_add, width=60, sort_dicts=False))
+        PlotDiagnosticResults.plot_AddMultEffects(addeff,
+                                     feature_col='Feature',
+                                     p_col='p-value',
+                                     labels=['Additive batch effect'],
+                                     p_thr=0.05,
+                                     annot_fmt="{:.3f}",
+                                     value_scale='p',
+                                     figsize=(6,8),
+                                     rep=report)
+        report.log_text("Additive batch effect plot added to report")
+        
+        # Batch-level: Pairwise batch comparison
+        report.log_text(pformat("Outputs no. of significant batch pairs by testing which if specific pair of batches differ from each other",width=90, sort_dicts=False))
+        mf,model_defs = DiagnosticFunctions.MixedEffects_long(
+            idp_matrix=data,
+            subjects=subject_ids,
+            timepoints=timepoints,
+            batches=batch,
+            idp_names=features,
+            covariates=covariates,  # optional
+            p_corr=1
+            #fix_eff=["age","sex"],   # batch is included automatically
+            #ran_eff=["subjects"],
+            #force_categorical=["sex"],
+            #force_numeric=["age"],
+            #zscore_var=["age"]
+            ) 
+        print("\nMIXED EFFECTS OUTPUTS:")
+        pd.set_option("display.max_rows", None)
+        pd.set_option("display.max_columns", None)
+        pd.set_option("display.width", None)
+        pd.set_option("display.max_colwidth", None)
+        print(mf) 
+        report.log_text(pformat(model_defs, width=60, sort_dicts=False))
+
+        n_batches = len(np.unique(batch))
+        total_pairs = n_batches * (n_batches - 1) // 2
+        report.log_text(f"Total number of pairs {total_pairs} for {len(np.unique(batch))} batches")
+
+        if len(features) < 30:
+            PlotDiagnosticResults.plot_MixedEffectsPart1(mf,
+                        idp_col='IDP',
+                        metrics=['n_is_batchSig'],
+                        plot_type='bar',
+                        seed=123,
+                        figsize=(16,4), rep=report)
+        else:
+            PlotDiagnosticResults.plot_MixedEffectsPart1(mf,
+                      idp_col='IDP',
+                      metrics=['n_is_batchSig'],
+                      plot_type='box',
+                      limit_idps=2,
+                      seed=123,
+                      figsize=(16,4), rep=report)
+        report.log_text("Pairwise batch variability plots added to report")
+
+        # Multiplicative batch effects
+        report.log_section("Multiplicative batch effects using Fligner-Kileen test", "Batch variability (Univariate): Batch effect analysis (variance comparison)")
+        report.log_text(pformat("Outputs p-values from multiplicative tests by comparing variance across batches, after accounting for subject effects and other covariates",width=90, sort_dicts=False))
+        muleff,model_defs_mul = DiagnosticFunctions.MultiplicativeEffect_long(
+            idp_matrix=data,
+            subjects=subject_ids,
+            timepoints=timepoints,
+            batch_name=batch,
+            idp_names=features,
+            covariates=covariates,
+            #fix_eff=["age", "sex"],   # fixed effects
+            #ran_eff=["subjects"],            # random intercepts
+            do_zscore=True,                  # z-score predictors AND response per feature
+            verbose=True)
+        print("\nRESULTS: MULTIPLICATIVE EFFECTS")
+        print(muleff)
+        report.log_text(pformat(model_defs_mul, width=60, sort_dicts=False))
+        PlotDiagnosticResults.plot_AddMultEffects(muleff,
+                                     feature_col='Feature',
+                                     p_col='p-value',
+                                     labels=['Multiplicative batch effect'],
+                                     p_thr=0.05,
+                                     annot_fmt="{:.3f}",
+                                     value_scale='p',
+                                     figsize=(6,8),
+                                     rep=report)
+        report.log_text("Multiplicative batch effect plots added to report")
+       
+       # Multivariate site differences using Mahalanobis distances
+        report.log_section("Multivariate batch difference with reference", "Batch variability (Multivariate): Difference from overall reference distribution")
+        report.log_text(pformat("Outputs average and batch-specific Mahalanobis distances from the reference",width=90, sort_dicts=False))
+        md = DiagnosticFunctions.MultiVariateBatchDifference_long(
+           idp_matrix=data,
+           batch=batch,
+           idp_names=features)
+        print("\nMULTIVARIATE PAIRWISE SITE DIFFERENCES:")
+        print(md)
+        PlotDiagnosticResults.plot_MultivariateBatchDifference(md, rep=report) 
+        report.log_text("Multivariate batch variability plots added to report")
+
+
+        # Across subjects-level: Intraclass correlation and within/between subject variability
+        report.log_section("Between subject variability using Mixed effect models", "Between subject variability (Univariate): Cross-subject variability analysis")
+        report.log_text(pformat("Outputs intra-class correlation and within to between subject variability ratio",width=90, sort_dicts=False))
+        #report.log_text(pformat(model_defs, width=60, sort_dicts=False))
+        if len(features) < 30:
+            PlotDiagnosticResults.plot_MixedEffectsPart1(mf,
+                        idp_col='IDP',
+                        metrics=['ICC','WCV'],
+                        plot_type='bar',
+                        seed=123,
+                        figsize=(16,4), rep=report)
+        else:
+            PlotDiagnosticResults.plot_MixedEffectsPart1(mf,
+                      idp_col='IDP',
+                      metrics=['ICC', 'WCV'],
+                      plot_type='box',
+                      limit_idps=2,
+                      seed=123,
+                      figsize=(16,4))
+        report.log_text("ICC and WCV plots added to report")  
+        
+        # Biological variability
+        report.log_section("Biological variability analysis using Mixed effect models", "Biological variability analysis")
+        report.log_text("Outputs:\n" 
+                        "1) significance\n" 
+                        "2) effect sizes (beta)\n"
+                        "3) confidence intervals")
+        inferred_fix = list(covariates.keys())
+        PlotDiagnosticResults.plot_MixedEffectsPart2(mf,
+                      idp_col='IDP',
+                      fix_eff=inferred_fix,
+                      p_thr=0.05,
+                      figsize=(8,4),
+                      rep=report)
+        report.log_text("Biological variability plots added to report")
 
         # Finalize
         logger.info("Diagnostic tests completed")
         logger.info(f"Report saved to: {report.report_path}")
+
 
     finally:
         # If we created the local report context, close it properly

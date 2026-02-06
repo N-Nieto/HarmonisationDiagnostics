@@ -235,7 +235,7 @@ def adjust_nums(numerical_covariates, drop_idxs):
 # Define ComBat harmonization function
 def combat(data, batch, mod, parametric,
            DeltaCorrection=True, UseEB=True, ReferenceBatch=None,
-           RegressCovariates=False, GammaCorrection=True, covbat_mode=False):
+           RegressCovariates=False, GammaCorrection=True, covbat_mode=False,return_priors=False):
     """
     Run ComBat harmonization on the data and return the harmonized data.
 
@@ -609,9 +609,6 @@ def combat(data, batch, mod, parametric,
         # full_scores as numpy array: shape (n_components, n_samples)
         full_scores = pca.transform(comdata_std).T   # pca.transform -> (n_samples, n_components) -> .T -> (n_components, n_samples)
 
-        # If you relied on DataFrame columns for ordering, sample_names preserves that:
-        # full_scores[:, i] corresponds to sample i in sample_names (if sample_names is provided)
-
         # Hard code pct_var for now:
         pct_var = 0.95
         var_exp = np.cumsum(np.round(pca.explained_variance_ratio_, decimals=4))
@@ -622,27 +619,13 @@ def combat(data, batch, mod, parametric,
         scores = full_scores[:npc, :]               # shape (npc, n_samples)
 
         # If combat_temp_for_covbat accepts numpy arrays, call directly:
-        try:
-            scores_com = combat(scores, batch, mod=[], eb=False)
-        except TypeError:
+        
+        scores_com = combat(scores, batch, mod=None, parametric=True,UseEB=False)
+        
             # If it expects a pandas DataFrame, convert temporarily:
-            import pandas as pd
-            if sample_names is not None:
-                df_scores = pd.DataFrame(scores.T, columns=[f'PC{i}' for i in range(scores.shape[0])])  # shape (n_samples, npc)
-                # transpose so columns are PCs if function expects that layout; adapt as required by your function
-                # many functions expect samples in rows; adjust accordingly
-                df_scores = df_scores.T  # back to (npc, n_samples) if needed by your function
-            else:
-                df_scores = pd.DataFrame(scores)  # fallback
-            df_scores_out = combat_temp_for_covbat(df_scores, batch, model=None, eb=False)
-            # convert back to numpy if function returned DataFrame
-            if isinstance(df_scores_out, pd.DataFrame):
-                # ensure shape matches (npc, n_samples)
-                scores_com = df_scores_out.values
-            else:
-                scores_com = np.asarray(df_scores_out)
-
-        # put adjusted scores back into full_scores
+        import pandas as pd
+        # Output is a numpy array:
+        
         full_scores[:npc, :] = scores_com
 
         # prepare output array (same shape as bayesdata)
@@ -662,11 +645,12 @@ def combat(data, batch, mod, parametric,
         x_covbat += x_recon
 
         # ensure stand_mean broadcasts across columns: make it (n_features, 1) if it's (n_features,)
-        stand_mean_arr = np.asarray(stand_mean)
+        """stand_mean_arr = np.asarray(stand_mean)
         if stand_mean_arr.ndim == 1:
             stand_mean_arr = stand_mean_arr.reshape(-1, 1)   # (n_features, 1)
 
         x_covbat += stand_mean_arr    # broadcasting across columns
+        """
 
         # final output
         bayesdata = x_covbat.copy()
@@ -677,21 +661,24 @@ def combat(data, batch, mod, parametric,
         bayesdata = (bayesdata * (np.sqrt(var_pooled)[:, None])) + (stand_mean - Cov_effects)
     else:
         bayesdata = (bayesdata * (np.sqrt(var_pooled)[:, None])) + stand_mean
-
-    # If input was a DataFrame, restore labels and original orientation
-    if dat_was_df:
-        # If we transposed the original data to get to (features x samples), we should map results back
-        if dat_transposed:
-            # original had samples as rows; so return shape (n_samples, n_features)
-            bayes_out = pd.DataFrame(bayesdata.T, index=dat_orig_index, columns=dat_orig_columns)
-        else:
-            # original had features as rows and samples as columns -> keep (features x samples)
-            bayes_out = pd.DataFrame(bayesdata, index=dat_orig_index, columns=dat_orig_columns)
-        return bayes_out, delta_star, gamma_star
-
-    # Otherwise return numpy arrays (as before)
-    return bayesdata, delta_star, gamma_star
-
+    
+    if return_priors:
+        # create dictionary of priors, bayes data and beta coefficients for covariates:
+        data = {
+            'bayesdata': bayesdata,
+            'B_hat': B_hat,
+            'gamma_bar': gamma_bar,
+            't2': t2,
+            'a_prior': a_prior,
+            'b_prior': b_prior,
+            'delta_hat': delta_hat,
+            'gamma_hat': gamma_hat,
+            'delta_star': delta_star,
+            'gamma_star': gamma_star
+        }
+        return data
+    else:
+        return bayesdata
 # Define CovBat harmonization function: from Chen et al. 2022
 def covbat(data, batch, model=None, numerical_covariates=None, pct_var=0.95, n_pc=0):
 
