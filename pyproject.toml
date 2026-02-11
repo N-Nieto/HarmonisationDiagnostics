@@ -55,7 +55,7 @@ docs = [
 ]
 
 [project.scripts]
-harmdiag = "DiagnoseHarmonize.cli:main"
+harmdiag = "DiagnoseHarmonization.cli:main"
 
 [tool.setuptools_scm]
 version_file = "DiagnoseHarmonization/_version.py"
