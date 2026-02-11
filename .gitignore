@@ -37,6 +37,7 @@ dist/
 venv/
 .env
 .pytest_cache/
+requirements.txt
 
 
 # OS generated files #

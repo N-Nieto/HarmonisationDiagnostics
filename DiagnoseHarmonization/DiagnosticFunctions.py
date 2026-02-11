@@ -612,6 +612,7 @@ def Variance_Ratios(data, batch, covariates=None):
         raise ValueError("At least two unique batches are required to compute ratio of variance.")
     batch_data = {}
     ratio_of_variance = {}
+
     """If covariates are provided, remove their effects from the data using linear regression"""
     if covariates is not None:
         from numpy.linalg import inv, pinv
@@ -686,11 +687,13 @@ def Levene_Test(data, batch, centre = 'median'):
 def KS_Test(data,
                 batch,
                 feature_names=None,
+                covariates=None,
                 compare_pairs=True,
                 compare_to_overall_excluding_batch=True,
                 min_batch_n=3,
                 alpha=0.05,
-                do_fdr=True):
+                do_fdr=True,
+                residualize_covariates=False):
     """
     Improved two-sample KS testing for batch effect detection.
 
@@ -771,6 +774,24 @@ def KS_Test(data,
         feature_names = [f"feature_{i+1}" for i in range(n_features)]
     elif len(feature_names) != n_features:
         raise ValueError("feature_names length must match number of features.")
+    
+    if residualize_covariates is True:
+        if covariates is None: # Skip this whole step
+            pass
+        else:
+            # Estimate betas for covariates and batch, remove covariate effects but keep batch effects
+            from numpy.linalg import lstsq
+            covariates = np.asarray(covariates, dtype=float)
+            if covariates.ndim == 1:
+                covariates = covariates.reshape(-1, 1)
+            if covariates.shape[0] != n_samples:
+                raise ValueError("Covariates must have the same number of rows as data.")
+            X = np.column_stack([np.ones((covariates.shape[0], 1)), covariates, pd.get_dummies(batch, drop_first=True)])  
+            B, *_ = lstsq(X, data, rcond=None)
+            predicted = X @ B
+            data = data - predicted + (X[:, 1+covariates.shape[1]:] @ B[1+covariates.shape[1]:,:])  # add back batch effects
+
+
 
     ks_results = {}
     # Pre-slice batch indices to avoid repeated boolean masks

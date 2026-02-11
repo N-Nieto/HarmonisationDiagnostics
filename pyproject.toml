@@ -10,6 +10,9 @@ readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.10"
 license = { file = "LICENSE" }
 
+[project.scripts]
+harmdiag = "DiagnoseHarmonize.cli:main"
+
 authors = [
   { name = "Jacob Turnbull", email = "jacob.turnbull@ndcn.ox.ac.uk" },
   { name = "Gaurav Bhalerao", email = "gaurv.bhalerao@ndcn.ox.ac.uk" },

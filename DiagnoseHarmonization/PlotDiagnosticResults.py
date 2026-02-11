@@ -491,6 +491,8 @@ def PC_corr_plot(
     ax.set_title("PCA Scatter Plot by Batch")
     ax.legend()
     ax.grid(True)
+    # put legend outside the plot area to avoid overlap with points, especially if many batches
+    ax.legend(loc="center left", bbox_to_anchor=(1, 0.5), fontsize="small", frameon=True)
     figs.append(("PCA scatter by batch", fig1))
     
     batch_numeric = pd.Categorical(batch).codes
@@ -502,10 +504,11 @@ def PC_corr_plot(
             vals = df[name].values
             fig, ax = plt.subplots(figsize=(8, 6))
             # treat small-unique-count as categorical
-            if len(np.unique(vals)) <= 20:
+            if len(np.unique(vals)) <= 10:
                 for cat in np.unique(vals):
                     sel = df[name] == cat
                     ax.scatter(df.loc[sel, "PC1"], df.loc[sel, "PC2"], label=f"{name}={cat}", alpha=0.6)
+                    ax.legend(loc="center left", bbox_to_anchor=(1, 0.5), fontsize="small", frameon=True)
             else:
                 sc = ax.scatter(df["PC1"], df["PC2"], c=vals, cmap="viridis", alpha=0.7)
                 plt.colorbar(sc, ax=ax, label=name)
@@ -514,7 +517,7 @@ def PC_corr_plot(
             ax.set_title(f"PCA Scatter Plot by {name}")
             # legend can be large; show only for categorical
             if len(np.unique(vals)) <= 20:
-                ax.legend(loc="best", fontsize="small", frameon=True)
+                ax.legend(loc="center left", bbox_to_anchor=(1, 0.5), fontsize="small", frameon=True)
             ax.grid(True)
             figs.append((f"PCA scatter by {name}", fig))
 
@@ -870,13 +873,12 @@ def plot_covariance_frobenius(
     caption_prefix: str = "Covariance comparison (PC space)",
 ) -> dict[str, Any]:
     """
-    Compute pairwise Frobenius norms of covariance differences between batches using PC scores.
+    Compute pairwise Frobenius norms of covariance differences between batches
 
     Args:
-        score: (n_samples, n_pcs) PCA score matrix.
+        score: (n_samples, n_pcs) whole data matrix in real space
         batch: (n_samples,) batch labels.
         rep: report object (must support rep.log_plot and rep.log_text).
-        max_components: number of PCs (k) to use for covariance estimation.
         normalize: if True, divide pairwise norms by Frobenius norm of pooled covariance.
         caption_prefix: prefix for plot captions.
 
@@ -947,7 +949,7 @@ def plot_covariance_frobenius(
         df_pairwise_norm = pairwise_norm
 
     results = {
-        "pcs_used": k,
+        "Number of features": k,
         "cov_matrices": cov_matrices,
         "pairwise_frobenius": df_pairwise,
         "pairwise_frobenius_normalized": df_pairwise_norm,
@@ -974,7 +976,7 @@ def plot_covariance_frobenius(
     ax1.set_xticklabels(batch_list, rotation=45, ha="right")
     ax1.set_yticks(np.arange(G))
     ax1.set_yticklabels(batch_list)
-    ax1.set_title("Normalized Frobenius norm of covariance differences (PC space)")
+    ax1.set_title("Normalized Frobenius norm of covariance differences (original feature space)")
 
     # --- Bar plot: max per batch ---
     max_per_batch = np.nanmax(pairwise_norm, axis=1)
@@ -996,7 +998,7 @@ def plot_covariance_frobenius(
     # compute max distance from each batch to others
     if rep is not None:
         rep.log_text(
-            f"{caption_prefix}: used first {k} PCs. Pooled Frobenius norm = {pooled_frob:.4g}. "
+            f"{caption_prefix}: used first {k} features. Pooled Frobenius norm = {pooled_frob:.4g}.\n "
             "Pairwise normalized Frobenius matrix and per-batch summaries added to report."
     )
     return results
