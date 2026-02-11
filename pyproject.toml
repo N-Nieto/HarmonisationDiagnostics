@@ -15,10 +15,6 @@ authors = [
   { name = "Gaurav Bhalerao", email = "gaurv.bhalerao@ndcn.ox.ac.uk" },
 ]
 
-[project.scripts]
-harmdiag = "DiagnoseHarmonize.cli:main"
-
-
 # Based on pip freeze and package imports as of 2026-01-09
 dependencies = [
   "numpy>=2.3,<3.0",
@@ -57,6 +53,9 @@ docs = [
   "sphinx",
   "sphinx-rtd-theme",
 ]
+
+[project.scripts]
+harmdiag = "DiagnoseHarmonize.cli:main"
 
 [tool.setuptools_scm]
 version_file = "DiagnoseHarmonization/_version.py"
