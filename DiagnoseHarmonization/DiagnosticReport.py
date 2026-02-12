@@ -204,7 +204,7 @@ def CrossSectionalReport(
         # ---------------------
         report.log_section("cohens_d", "Cohen's D test for mean differences")
         logger.info("Cohen's D test for mean differences")
-        cohens_d_results, pairlabels = DiagnosticFunctions.Cohens_D(data, batch, covariates=covariates)
+        cohens_d_results, pairlabels = DiagnosticFunctions.Cohens_D(data, batch, covariates=covariates_numeric)
         report.text_simple("Cohen's D test for mean differences completed")
 
         # Plot (PlotDiagnosticResults should call rep.log_plot internally; our report.log_section ensures plots are attached)
@@ -242,7 +242,7 @@ def CrossSectionalReport(
         # Mahalanobis
         report.log_section("mahalanobis", "Mahalanobis distance test")
         logger.info("Doing Mahalanobis distance test for multivariate mean differences")
-        mahalanobis_results = DiagnosticFunctions.Mahalanobis_Distance(data, batch, covariates=covariates)
+        mahalanobis_results = DiagnosticFunctions.Mahalanobis_Distance(data, batch, covariates=covariates_numeric)
         report.log_text("Mahalanobis distance test for multivariate mean differences completed")
         PlotDiagnosticResults.mahalanobis_distance_plot(mahalanobis_results, rep=report)
         report.log_text("Mahalanobis distance plot added to report")
@@ -368,7 +368,7 @@ def CrossSectionalReport(
         # Variance ratio
         report.log_section("variance_ratio", "Variance ratio test (F-test) for variance differences between batches")
         logger.info("Variance ratio test between each unique batch pair")
-        variance_ratio = DiagnosticFunctions.Variance_Ratios(data, batch, covariates=covariates)
+        variance_ratio = DiagnosticFunctions.Variance_Ratios(data, batch, covariates=covariates_numeric)
         report.log_text("Variance ratio test between each unique batch pair completed")
 
         labels = [f"Batch {b1} vs Batch {b2}" for (b1, b2) in variance_ratio.keys()]
@@ -453,7 +453,7 @@ def CrossSectionalReport(
 
         variable_names = ["batch"] + covariate_names
         explained_variance, score, batchPCcorr, pca = DiagnosticFunctions.PC_Correlations(
-            data, batch, covariates=covariates, variable_names=variable_names
+            data, batch, covariates=covariates_numeric, variable_names=variable_names
         )
 
         report.text_simple("Returning correlations of covariates and batch with first four PC's")
@@ -461,7 +461,7 @@ def CrossSectionalReport(
         report.log_text(f"Variable names used in PCA correlation plots and PC1 vs PC2 plot: {covariate_names}")
     
         PlotDiagnosticResults.PC_corr_plot(
-            score, batch, covariates=covariates, variable_names=covariate_names,
+            score, batch, covariates=covariates_numeric, variable_names=covariate_names,
             PC_correlations=True, rep=report, show=False
         )
         report.log_text("PCA correlation plot added to report")
@@ -469,7 +469,7 @@ def CrossSectionalReport(
         # Demean the data before PCA to avoid mean differences dominating first PC (i.e don't force PC'S > 1 to be orthogonal to mean)
         #data_demeaned = data - np.mean(data, axis=0)
         explained_variance, score, batchPCcorr, pca = DiagnosticFunctions.PC_Correlations(
-            data, batch,N_components=20, covariates=covariates, variable_names=variable_names
+            data, batch,N_components=20, covariates=covariates_numeric, variable_names=variable_names
         )
 
 
@@ -524,7 +524,7 @@ def CrossSectionalReport(
         # ---------------------
         report.log_section("ks", "Two-sample Kolmogorov-Smirnov tests")
         logger.info("Two-sample Kolmogorov-Smirnov test for distribution differences between each unique batch pair")
-        ks_results = DiagnosticFunctions.KS_Test(data, batch, feature_names=None, covariates=covariates, do_fdr=True,residualize_covariates=True)
+        ks_results = DiagnosticFunctions.KS_Test(data, batch, feature_names=None, covariates=covariates_numeric, do_fdr=True,residualize_covariates=True)
         report.log_text("Two-sample Kolmogorov-Smirnov test completed")
 
         for key, value in ks_results.items():
