@@ -187,12 +187,25 @@ def CrossSectionalReport(
         PlotDiagnosticResults.Z_Score_Plot(zscored_data, batch, rep=report)
         report.log_text("Z-score normalization visualization added to report")
         report.text_simple(line_break_in_text)
+
+        # Create numeric versions of covariates for tests that require numeric input (e.g. PCA correlation function)
+        if covariates is not None: # Check if dictionary:
+            if isinstance(covariates, dict):
+                covariates_numeric = covariates.copy()
+                for col in covariates_numeric.columns:
+                    if covariates_numeric[col].dtype.kind in {"U", "S", "O"}:  # string/object categorical
+                        covariates_numeric[col], _ = pd.factorize(covariates_numeric[col])
+                        covariates = covariates_numeric
+        else:
+            covariates_numeric = None
+   
+
         # ---------------------
         # Additive tests
         # ---------------------
         report.log_section("cohens_d", "Cohen's D test for mean differences")
         logger.info("Cohen's D test for mean differences")
-        cohens_d_results, pairlabels = DiagnosticFunctions.Cohens_D(data, batch,covariates=covariates)
+        cohens_d_results, pairlabels = DiagnosticFunctions.Cohens_D(data, batch, covariates=covariates)
         report.text_simple("Cohen's D test for mean differences completed")
 
         # Plot (PlotDiagnosticResults should call rep.log_plot internally; our report.log_section ensures plots are attached)
@@ -216,13 +229,14 @@ def CrossSectionalReport(
                 f"Number of features with large effect size (|d| >= 0.6): {large_effect}\n"
             )
         from DiagnoseHarmonization.SaveDiagnosticResults import save_test_results
-        save_test_results(data_dict,
-        test_name="Cohens_D",
-        save_root=save_dir,
-        feature_names=feature_names,
-        report_date=report_date, 
-        report_name=report_name,
-        )
+        if save_data:
+            save_test_results(data_dict,
+            test_name="Cohens_D",
+            save_root=save_dir,
+            feature_names=feature_names,
+            report_date=report_date, 
+            report_name=report_name,
+            )
         report.text_simple("Cohen's D test summaries added to report and saved as csv if requested")
         report.text_simple(line_break_in_text)
 
@@ -575,7 +589,7 @@ def CrossSectionalReport(
         # If we created the local report context, close it properly
         if created_local_report:
             # call __exit__ on the context-managed report
-            report_ctx.__exit__(None, None, None)  
+            report_ctx.__exit__(None, None, None)
 
 from typing import Optional, Union
 def LongitudinalReport(data, batch,

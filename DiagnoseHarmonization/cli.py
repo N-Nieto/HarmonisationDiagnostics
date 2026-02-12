@@ -80,7 +80,8 @@ def run_pipeline_from_cli(data_path: str,
                           outdir: Optional[str] = None,
                           report_name: Optional[str] = None,
                           verbose: bool = False,
-                          save_data: bool = False) -> Optional[Dict[str, Any]]:
+                          save_data: bool = True,
+                          save_data_name: str = None) -> Optional[Dict[str, Any]]:
     # 1) read CSVs
     if verbose:
         print(f"Reading data from: {data_path}")
@@ -124,6 +125,7 @@ def run_pipeline_from_cli(data_path: str,
             detected_batch_idx = idx
             batch_col_name = cov_df.columns[detected_batch_idx]
             print(f"Detected batch column automatically as '{batch_col_name}'.")
+            
         else:
             # not found — inform user and continue in no-batch / single-batch mode
             print("No batch-like column found in covariates headers. Running in single-batch (no batch) mode.", file=sys.stderr)
@@ -137,57 +139,74 @@ def run_pipeline_from_cli(data_path: str,
     feature_names = list(data_sub.columns)
 
     # 6) covariate matrix
-    # keep all covariates columns except subject id (already indexed)
+    # keep all covariates columns except subject id and batch
+        # --- robust covariate / batch handling --------------------------------
+        # --- robust covariate / batch handling (remove batch column entirely) ---
+    # normalise column names (trim whitespace)
+    cov_sub.columns = [c.strip() for c in cov_sub.columns]
     covariates_df = cov_sub.copy()
+
+    # If a batch column name was detected / supplied, pop it out so it is removed from covariates_df
     if batch_col_name is not None:
+        batch_col_name = batch_col_name.strip()
         if batch_col_name not in covariates_df.columns:
-            raise ValueError(f"Detected batch column '{batch_col_name}' not present after indexing.")
-        batch_series = covariates_df[batch_col_name].astype(str)
-        # create numeric batch codes if needed
+            raise ValueError(f"Detected batch column '{batch_col_name}' not present in covariates after indexing.")
+        # pop removes column from covariates_df and returns the Series
+        batch_series = covariates_df.pop(batch_col_name).astype(str)
         unique_batches = sorted(batch_series.unique())
         batch_codes = pd.Categorical(batch_series, categories=unique_batches).codes
-        covariates_df["_batch_code_"] = batch_codes
     else:
+        # fallback: single batch (no batch column in file)
         batch_series = pd.Series(["single_batch"] * covariates_df.shape[0], index=covariates_df.index)
-        covariates_df["_batch_code_"] = np.zeros(covariates_df.shape[0], dtype=int)
+        batch_codes = np.zeros(covariates_df.shape[0], dtype=int)
 
-    # 7) convert to simple structs for downstream code if desired
-    data_struct = {
-        "X": X,  # numpy array (n_subjects x n_features)
-        "feature_names": feature_names,
-        "subject_ids": list(data_sub.index)
-    }
-    cov_struct = {
-        "covariates_df": covariates_df,  # pandas DataFrame with covariates and _batch_code_
-        "batch_series": batch_series,
-        "batch_col_name": batch_col_name
-    }
+    # Defensive: remove any other covariate columns that are identical to batch (string-equality)
+    # (this covers cases where the same info is duplicated under a different header)
+    cols_to_drop = []
+    for col in list(covariates_df.columns):
+        try:
+            if covariates_df[col].astype(str).equals(batch_series.astype(str)):
+                cols_to_drop.append(col)
+        except Exception:
+            # if comparison fails for any reason, skip that column
+            continue
+    if cols_to_drop:
+        if verbose:
+            print(f"Removing covariate columns identical to batch: {cols_to_drop}", file=sys.stderr)
+        covariates_df.drop(columns=cols_to_drop, inplace=True)
 
+    # Remove any subject ID columns if they remain (safe drop)
+    covariates_df.drop(columns=[data_id_col, cov_id_col], errors='ignore', inplace=True)
+
+    # sanitize column names to safe python identifiers (optional)
+    cleaned = []
+    for name in covariates_df.columns:
+        new = name.replace(" ", "_").replace(".", "_").replace(",", "_").replace("(", "_").replace(")", "_")
+        cleaned.append(new)
+        if new != name:
+            print(f"Warning: renamed covariate column '{name}' -> '{new}'", file=sys.stderr)
+    covariates_df.columns = cleaned
+
+    # debug: show remaining covariate columns so you can confirm batch is NOT present
     if verbose:
-        print("Data converted:")
-        print(f"  - subjects: {X.shape[0]}, features: {X.shape[1]}")
-        print(f"  - batch column: {batch_col_name} (unique={covariates_df['_batch_code_'].nunique()})")
+        print("Final covariates columns (should NOT include batch):", covariates_df.columns.tolist())
 
-    # 8) call the project's harmonisation / reporting function
-    # --- IMPORTANT: replace the import & call below with your project's API. ---
-    # Example placeholder:
+    # Now call your report. Pass batch_codes (or batch_series) separately.
+    from DiagnoseHarmonization import DiagnosticReport
     try:
-        # try importing the expected function from your package
-        from DiagnoseHarmonization import DiagnosticReport
+        DiagnosticReport.CrossSectionalReport(
+            X,
+            batch=batch_codes,              # numeric batch vector separate from covariates
+            covariates=covariates_df,       # covariates WITHOUT any batch column
+            covariate_names=list(covariates_df.columns),
+            feature_names=None,
+            save_dir=outdir,
+            save_data=save_data,
+            report_name=report_name,
+            save_data_name=save_data_name,
+        )
 
-        DiagnosticReport.CrossSectionalReport(X,
-                             batch=cov_struct["batch_series"],
-                             covariates=cov_struct["covariates_df"],
-                             covariate_names=list(cov_struct["covariates_df"].columns),
-                             feature_names=data_struct["feature_names"],
-                             subject_ids=data_struct["subject_ids"],
-                             save_dir=outdir,
-                             save_data=save_data,
-                             report_name=report_name)
-        
-        # For now, we call a simple placeholder that returns a summary dict:
-        
-        # TODO: when integrating, replace above with your function and pass data_struct, cov_struct.
+            
     except Exception as e:
         raise RuntimeError(f"Error running pipeline: {e}")
 
@@ -211,6 +230,7 @@ def main(argv: Optional[Sequence[str]] = None):
     runp.add_argument("-v", "--verbose", action="store_true", help="Verbose output.")
     runp.add_argument("--report-name", default=None, help="Optional name for the report (used in filenames).")
     runp.add_argument("--save-data", action="store_true", help="Whether to save the aligned data and covariates used for the report (for debugging).")
+    runp.add_argument("--save-data-name", default=None, help="Optional name for the saved data files (used in filenames).")
     
 
     args = p.parse_args(argv)
@@ -222,7 +242,9 @@ def main(argv: Optional[Sequence[str]] = None):
             data_id_col=args.data_id_col,
             cov_id_col=args.cov_id_col,
             outdir=args.outdir,
-            verbose=args.verbose
+            report_name=args.report_name,
+            save_data=args.save_data,
+            save_data_name=args.save_data_name,
         )
     else:
         p.print_help()
@@ -230,59 +252,3 @@ def main(argv: Optional[Sequence[str]] = None):
 
 if __name__ == "__main__":
     main()
-
-    import io
-import pandas as pd
-
-# Optional: if you have charset-normalizer or chardet installed use them
-try:
-    import chardet
-except Exception:
-    chardet = None
-
-def robust_read_csv(path, pandas_kwargs=None, try_encodings=None):
-    """
-    Read CSV with a fallback strategy for encodings.
-    Returns dataframe and used encoding.
-    """
-    if pandas_kwargs is None:
-        pandas_kwargs = {}
-    if try_encodings is None:
-        try_encodings = ["utf-8", "utf-8-sig", "cp1252", "latin-1"]
-
-    # Fast attempt loop
-    for enc in try_encodings:
-        try:
-            return pd.read_csv(path, encoding=enc, **pandas_kwargs), enc
-        except UnicodeDecodeError:
-            continue
-        except pd.errors.ParserError:
-            # try with engine='python' as a fallback for weird separators
-            try:
-                return pd.read_csv(path, encoding=enc, engine="python", **pandas_kwargs), enc
-            except Exception:
-                continue
-
-    # Attempt to detect encoding (best-effort)
-    if chardet is not None:
-        with open(path, "rb") as fh:
-            raw = fh.read(100000)  # sample
-            guess = chardet.detect(raw)
-            enc = guess.get("encoding")
-            if enc:
-                try:
-                    return pd.read_csv(path, encoding=enc, **pandas_kwargs), enc
-                except Exception:
-                    pass
-
-    # Last resort: open with 'latin-1' but warn the user
-    try:
-        df = pd.read_csv(path, encoding="latin-1", **pandas_kwargs)
-        return df, "latin-1 (fallback, may mangle non-latin text)"
-    except Exception as e:
-        # raise a helpful error
-        raise UnicodeDecodeError(
-            f"Failed to read CSV '{path}'. Tried encodings {try_encodings} "
-            f"and detection (chardet={bool(chardet)}). Last error: {e}"
-        )
-
