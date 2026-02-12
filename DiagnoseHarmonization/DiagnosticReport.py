@@ -188,22 +188,17 @@ def CrossSectionalReport(
         report.log_text("Z-score normalization visualization added to report")
         report.text_simple(line_break_in_text)
 
-        # Create numeric versions of covariates for tests that require numeric input (e.g. PCA correlation function)
-        if covariates is not None: # Check if dictionary:
-            if isinstance(covariates, dict):
-                covariates_numeric = covariates.copy()
-                for col in covariates_numeric.columns:
-                    if covariates_numeric[col].dtype.kind in {"U", "S", "O"}:  # string/object categorical
-                        covariates_numeric[col], _ = pd.factorize(covariates_numeric[col])
-                        covariates = covariates_numeric
-        else:
-            covariates_numeric = None
-
-        # Temp fix to convert covariates to numeric if they are not already, for functions that require numeric input (e.g. PCA correlation function). This will be replaced with a more robust solution in the future that handles mixed covariate types and allows user control over which covariates are converted.
-        
-        covariates = covariates_numeric
-   
-
+        covariates_numeric = covariates
+        # if dataframe or dictionary, convert to numeric array:
+        if covariates is not None:
+            if isinstance(covariates, pd.DataFrame):
+                covariates_numeric = covariate_to_numeric(covariates.values)
+            elif isinstance(covariates, dict):
+                covariates_numeric = covariate_to_numeric(np.column_stack(list(covariates.values())))
+            elif isinstance(covariates, np.ndarray):
+                covariates_numeric = covariate_to_numeric(covariates)
+            else:
+                raise ValueError("Covariates must be a numpy array, pandas DataFrame, or dictionary of arrays")
         # ---------------------
         # Additive tests
         # ---------------------
