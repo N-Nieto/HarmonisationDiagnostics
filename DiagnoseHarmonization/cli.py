@@ -222,14 +222,13 @@ def main(argv: Optional[Sequence[str]] = None):
     runp = sub.add_parser("run", help="Run the diagnostics pipeline from data and covariates CSVs")
     runp.add_argument("--data", "-d", required=True, help="Path to data CSV (subjects x IDPs). First row must be feature names.")
     runp.add_argument("--covariates", "-c", required=True, help="Path to covariates CSV (first column subject ID).")
-    runp.add_argument("--batch-col", type=int, default=None,
-                      help="1-based column number in covariates CSV where batch is located. If omitted, tries to auto-detect by header.")
+    runp.add_argument("--batch-col", type=int, default=None, help="1-based column number in covariates CSV where batch is located. If omitted, tries to auto-detect by header.")
     runp.add_argument("--data-id-col", default=None, help="Data subject ID column name (defaults to first column).")
     runp.add_argument("--cov-id-col", default=None, help="Covariates subject ID column name (defaults to first column).")
     runp.add_argument("--outdir", default=None, help="Directory to write summary / report files.")
     runp.add_argument("-v", "--verbose", action="store_true", help="Verbose output.")
     runp.add_argument("--report-name", default=None, help="Optional name for the report (used in filenames).")
-    runp.add_argument("--save-data", action="store_true", help="Whether to save the aligned data and covariates used for the report (for debugging).")
+    runp.add_argument("--save-data", default = True, help="Whether to save the aligned data and covariates used for the report (for debugging).")
     runp.add_argument("--save-data-name", default=None, help="Optional name for the saved data files (used in filenames).")
     
 

@@ -47,7 +47,7 @@ def CrossSectionalReport(
     batch,
     covariates=None,
     covariate_names=None,
-    save_data: bool = False,
+    save_data: bool = True,
     save_data_name: str | None = None,
     save_dir: str | os.PathLike | None = None,
     feature_names: list | None = None,
