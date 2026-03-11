@@ -1,6 +1,6 @@
 # DiagnoseHarmonize
 
-DiagnoseHarmonize is an **in-development** library for the streamlined application and assessment of harmonization algorithms at the summary-measure level. It also serves as a centralised location for popular, well-validated harmonization methods from the literature.
+DiagnoseHarmonize is an **in-development** library for the streamlined application and assessment of harmonization algorithms at the summary-measure level. It also serves as a centralised location for popular, well-validated harmonization methods from the literature. Full documentation is available here **[DiagnoseHarmonization](https://jake-turnbull.github.io/HarmonizationDiagnostics/)**
 
 In an upcoming paper, we plan to demonstrate that systematic evaluation and reporting of different components of batch effects is not only beneficial for choosing an appropriate harmonisation strategy, but essential for evaluating how well harmonisation has worked.
 
@@ -25,7 +25,7 @@ If you find any issues or bugs in the code, please raise an issue or contact one
 
 ## Overview
 
-This library is intended to support the streamlined analysis and application of harmonisation for MRI data. Consistent reporting of different components of batch differences should be carried out both pre- and post-harmonisation, both to confirm that harmonisation was needed and to verify that it was successful.
+This library is intended to support the streamlined analysis and application of harmonisation for MRI data. Consistent reporting of different components of batch differences should be carried out both pre- and post-harmonisation, both to confirm that harmonisation was needed and to verify that it was successful. 
 
 While this tool was developed for MRI data, there is no inherent reason it cannot be used in other research scenarios.
 
@@ -39,7 +39,6 @@ Harmonisation efficacy should therefore be assessed across two broad categories:
 This library provides a set of functions to assess the severity, nature, and distribution of batch effects across features in multi-batch data. These diagnostics are intended to provide guidance on the most appropriate harmonisation strategy to apply.
 
 Harmonisation is goal-specific, so its integration into experimental design should be carefully considered. Diagnostic reports can serve as a practical method for informing experimental design decisions.
-
 
 ## DiagnosticReport.py
 
