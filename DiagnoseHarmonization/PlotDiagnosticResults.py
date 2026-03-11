@@ -214,6 +214,17 @@ def Cohens_D_plot(
     caption: Optional[str] = None,
     show: bool = False
 ) -> plt.Figure:
+    
+    """Plots Cohen's d effect sizes as a bar plot with histograms of the values.
+    Args:
+        cohens_d (np.ndarray): 2D array of Cohen's d values (num_pairs x num_features).
+        pair_labels (list): List of labels for each pair of batches corresponding to rows in cohens_d.
+        df (Optional[pd.DataFrame], optional): Optional DataFrame containing additional information. Defaults to None.
+        rep (optional): Optional StatsReporter instance. Defaults to None.
+        caption (Optional[str], optional): Optional caption for the plot. Defaults to None.
+        show (bool, optional): Whether to display the plot. Defaults to False.
+    Returns:
+        plt.Figure: The generated plot figure."""
     # (validation code unchanged)...
     if not isinstance(cohens_d, np.ndarray):
         raise ValueError("cohens_d must be a NumPy array.")
@@ -277,6 +288,11 @@ def variance_ratio_plot(variance_ratios:  np.ndarray, pair_labels: list,
 
     Args:
         variance_ratios (Sequence[float]): A sequence of explained variance ratios for each principal component.
+        pair_labels (list): List of labels for each pair of batches corresponding to rows in variance_ratios.
+        df (None, optional): Placeholder for potential future use. Defaults to None.
+        rep (optional): Optional StatsReporter instance. Defaults to None.
+        caption (Optional[str], optional): Optional caption for the plot. Defaults to None.
+        show (bool, optional): Whether to display the plot. Defaults to False.
     Returns:
 
         None: Displays plot of vario per feature and a histogram of the values on different axes.
@@ -334,24 +350,8 @@ def variance_ratio_plot(variance_ratios:  np.ndarray, pair_labels: list,
 
     return None if rep is not None else figs
 
-def levenes_plot(
-    levenes_results: pd.DataFrame,
-    *,
-    rep = None,            # optional StatsReporter
-    caption: Optional[str] = None,
-    show: bool = False,
-    pair_labels: Optional[list] = None
-) -> plt.Figure:
-    """
-    Plots Levene's test results as a bar plot with significance markers.
-
-    Args:
-        levenes_results dict: pairlabels (batchwise), statistics, pvalues for each unique pair, statistic and pvalue are 1D arrays length of num_features"""
-    figs = []
-    return figs
-
 """----------------------------------------------------------------------------------------------------------------------------"""
-"""---------------------------------------- Plotting functions for PCA correlation results ----------------------------------"""
+"""---------------------------------------- Plotting functions for dimensionality reduction ----------------------------------"""
 """----------------------------------------------------------------------------------------------------------------------------"""
 @rep_plot_wrapper
 def PC_corr_plot(
@@ -365,26 +365,19 @@ def PC_corr_plot(
     cluster_batches: bool = False
 ):
     """
-    Generate multiple PCA diagnostic plots and return a list of (caption, fig).
-
-    Improvements / behavior:
-      - covariates may be a numpy array (2D), a pandas.DataFrame, or a structured numpy array.
-      - If covariates has column names (DataFrame.columns or structured dtype.names), those names are used.
-      - If covariates is a plain ndarray, variable_names (if provided) will be used as covariate names.
-      - variable_names may optionally include 'batch' as the first element: ['batch', 'Age', 'Sex'].
-      - If no covariate names are available, defaults "Covariate1", "Covariate2", ...
-
-
-      K-means clustering of PCA points by batch and covariates to be added in future edit, additionally, 
-      silhouette score calculation for batch also added. (Future work may add similar implementation for covariates if needed).
+    Generate PCA diagnostic plots and return a list of (caption, fig).
 
     Args:
-        PrincipleComponents (np.ndarray): 2D array of PCA components (samples x components).
-        batch (np.ndarray): 1D array of batch labels for each sample.
-        covariates (Optional[Union[np.ndarray, pd.DataFrame]]): Optional covariate data.
-        variable_names (Optional[List[str]]): Optional list of variable names for batch and covariates.
-        PC_correlations (bool): If True, generate correlation heatmap.
-        show (bool): If True, display plots immediately.
+        PrincipleComponents (np.ndarray): 2D array of shape (n_samples, n_components) containing PCA scores.
+        batch (np.ndarray or list): 1D array or list of batch labels corresponding to each sample.
+        covariates (optional): Optional covariate data. Can be a DataFrame, structured array, or 2D array. Defaults to None.
+        variable_names (optional): Optional list of variable names for covariates and batch. If covariates provided, should match number of covariate columns. 
+        If first element is 'batch', it will be used as batch column name. Defaults to None.
+
+    returns:
+        List[Tuple[str, plt.Figure]]: A list of tuples containing captions and corresponding figures for the PCA diagnostic plots.
+
+
         
     """
     import numpy as np
@@ -484,7 +477,7 @@ def PC_corr_plot(
     batch_numeric = pd.Categorical(batch).codes
     batch_col_code = f"{batch_col_name}_code"
     df[batch_col_code] = batch_numeric
-    # --- 3) Correlation heatmap if requested ---
+    # --- 
     if PC_correlations:
         # create combined_data and combined_names in the same order used for corr matrix
         if cov_names:
@@ -496,7 +489,12 @@ def PC_corr_plot(
 
         corr = np.corrcoef(combined_data.T)
         fig, ax = plt.subplots(figsize=(10, 8))
-        sns.heatmap(corr, annot=True, fmt=".2f", cmap="coolwarm", xticklabels=combined_names, yticklabels=combined_names, ax=ax)
+        # Check number of combined_names to adjust font size for readability:
+        if len(combined_names) > 10:
+            sns.heatmap(corr, annot=True, fmt=".2f", cmap="coolwarm", xticklabels=combined_names, yticklabels=combined_names, ax=ax)
+        else: # Use just numbers if too many variables to avoid clutter:
+            x_ticks = [f"{name}\n({i+1})" for i, name in enumerate(combined_names)]
+            sns.heatmap(corr, annot=True, fmt=".2f", cmap="coolwarm", xticklabels=x_ticks, yticklabels=x_ticks, ax=ax)       
         ax.set_title("Correlation Matrix of PCs, Batch, and Covariates")
         figs.append(("PCA correlation matrix", fig))
     
@@ -523,6 +521,18 @@ def clustering_analysis_PCA(
     cluster_batches: bool = False,
     UMAP_embedding=False,
     data = None):
+
+    """
+    Perform clustering analysis on PCA results and generate diagnostic plots.
+    Args:
+        PrincipleComponents (np.ndarray): 2D array of shape (n_samples, n_components) containing PCA scores.
+        batch (np.ndarray or list): 1D array or list of batch labels corresponding to each sample.
+        covariates (optional): Optional covariate data. Can be a DataFrame, structured array, or 2D array. Defaults to None.
+        variable_names (optional): Optional list of variable names for covariates and batch. If covariates provided, should match number of covariate columns.
+        If first element is 'batch', it will be used as batch column name. Defaults to None.
+    Returns:
+        List[Tuple[str, plt.Figure]]: A list of tuples containing captions and corresponding figures for the PCA diagnostic plots.
+    """
     import numpy as np
     import pandas as pd
     import matplotlib.pyplot as plt
@@ -678,7 +688,29 @@ def clustering_analysis_all(
     covariates=None,
     variable_names=None,
     show: bool = False,
-    UMAP_embedding=True):
+    UMAP_embedding=True,
+    UMAP_neighbors=15,
+    UMAP_min_dist=0.1,
+    UMAP_metric='euclidean'
+):
+    """
+    Perform clustering analysis on PCA results and generate diagnostic plots, 
+    Additionally perform UMAP on raw data and show embedding colored by batch and covariates for comparison with PCA clustering.
+
+    Args:
+    PrincipleComponents (np.ndarray): 2D array of shape (n_samples, n_components) containing PCA scores.
+    data (np.ndarray): 2D array of shape (n_samples, n_features) containing the original data used for PCA (required for UMAP embedding).
+    batch (np.ndarray or list): 1D array or list of batch labels corresponding to each sample.
+    covariates (optional): Optional covariate data. Can be a DataFrame, structured array, or 2D array. Defaults to None.
+    variable_names (optional): Optional list of variable names for covariates and batch. If covariates provided, should match number of covariate columns. If first element is 'batch', it will be used as batch column name. Defaults to None.
+    show (bool, optional): Whether to display the plots. Defaults to False.
+    UMAP_embedding (bool, optional): Whether to perform UMAP embedding on the original data and plot it colored by batch and covariates. Defaults to True.
+    UMAP_neighbors (int, optional): The number of neighbors to use for UMAP. Defaults to 15.
+    UMAP_min_dist (float, optional): The minimum distance parameter for UMAP. Defaults to 0.1.
+    UMAP_metric (str, optional): The distance metric to use for UMAP. Defaults to 'euclidean'.
+
+
+    Args:"""
 
     import numpy as np
     import pandas as pd
@@ -758,17 +790,19 @@ def clustering_analysis_all(
 
     # Plot PCA scatter by batch and covariates as in previous function, create subplots for each covariate and batch
     # Here we will then display the low dimensional UMAP embedding of the data coloured by batch and covariates next to PCA for comparisson
+    if data is not None and len(data) > 10000:
+        print("Data has more than 10,000 samples; This may make UMAP very slow and memory intensive.")
 
 
     # Perform UMAP embedding if data is provided and not too large (to avoid long runtime and memory issues)
-    if data is not None and len(data) < 10000:
-        reducer = umap.UMAP(random_state=42)
+
+    if data is not None:
+        reducer = umap.UMAP(n_neighbors=UMAP_neighbors, min_dist=UMAP_min_dist, metric=UMAP_metric, random_state=42)
         embedding = reducer.fit_transform(data)
 
         df_umap = pd.DataFrame(embedding, columns=["UMAP1", "UMAP2"])
         df_umap[batch_col_name] = batch
 
-        
         if cov_names:
             for i, name in enumerate(cov_names):
                 df_umap[name] = cov_matrix[:, i]
@@ -1422,7 +1456,7 @@ def KS_plot(ks_results: dict,
     figs.append((caption or "KS Test: Batch vs Overall", fig))
 
     # Repeat for batch vs batch on next figure:
-    fig2 = plt.figure(figsize=(12, 6))
+    """fig2 = plt.figure(figsize=(12, 6))
     ax2 = gca()
     for key in ks_results:
         if len(key) == 2 and key[1] != 'overall':
@@ -1441,15 +1475,7 @@ def KS_plot(ks_results: dict,
     plt.xlabel("Features (ordered by -log10 p-value)")
     plt.ylabel("-log10 p-value")
     plt.title("KS Test: Batch vs Batch")
-    plt.grid(True)
-    # Add an line to the plot to indicate significant threshold at 0.05 and 0.01 (Bonferroni corrected and uncorrected)
-    sig_threshold_05 = -np.log10(0.05 / n_features)
-    sig_threshold_01 = -np.log10(0.01 / n_features)
-    plt.axhline(y=sig_threshold_05, color='r', linestyle='-', label='Significance Threshold (0.05 Bonferroni)')
-    plt.axhline(y=sig_threshold_01, color='g', linestyle='-', label='Significance Threshold (0.01 Bonferroni)')
-
-    plt.legend()
-    figs.append((caption or "KS Test: Batch vs Batch", fig2))
+    plt.grid(True)"""
 
     # Check if show is given, if so, display the plots
     for caption_i, fig in figs:
@@ -1922,6 +1948,11 @@ def plot_WithinSubjVar(
     savepath=None,
     rep=None,
     show: bool = False):
+
+    """Plots within-subject variability across IDPs, showing:
+  A) Per-IDP distribution across subjects (boxplot + jittered points)
+  B) Per-IDP mean across subjects (boxplot + points)
+  C) Per-subject mean across IDPs (boxplot + points)"""
     if idp_cols is None:
         idp_cols = [c for c in df.columns if c != subject_col]
     subjects = df['subject'].tolist()
@@ -2107,6 +2138,7 @@ def plot_MultivariateBatchDifference(df,
 
 ### mixed effects models plots
 def _build_default_idp_style(idps, palette="Set2", markers=None):
+    """Helper to build a default idp_style dict if not provided."""
     if markers is None:
         markers = ['o','s','^','D','P','X','v','<','>','*','h','H']
     colors = sns.color_palette(palette, max(2, len(idps)))

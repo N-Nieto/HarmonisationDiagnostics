@@ -1,17 +1,14 @@
-import os
+# This is a test to see if the diagnostic report can handle missing data correctly 
+
+import pytest
+from DiagnoseHarmonization import DiagnosticReport
 import numpy as np
 from pathlib import Path
-import pytest
-import time
-import webbrowser
-
-# Adjust import to match your package layout
-# from DiagnoseHarmonization.DiagnosticReport import DiagnosticReport
-# If DiagnosticReport is defined in a module file DiagnosticReport.py inside DiagnoseHarmonization package:
+import pandas as pd
 
 save_dir = "/Users/jacob.turnbull/VS_code_projects/diagnostic_full_run/"
 
-def test_full_pipeline_generates_report(tmp_path = save_dir):
+def test_missing_data(tmp_path = save_dir):
     """
     Run the full DiagnosticReport pipeline once and produce a single HTML report.
     - Writes report to a temporary directory (tmp_path / "diagnostic_full_run")
@@ -37,7 +34,7 @@ def test_full_pipeline_generates_report(tmp_path = save_dir):
     covariate_cat = covariate_cat - np.mean(covariate_cat)           # mean center
     covariate_cont = covariate_cont- np.mean(covariate_cont)             # mean center
 
-    batch = np.array(["Siemens"] * int(n_samples/2) + ["Philips"] * int(n_samples/8)  + ["GE"] * int(n_samples/8)  + ["Magnetom"] * int(n_samples/4) )
+    batch = np.array(["Siemens"] * int(n_samples/4) + ["Philips"] * int(n_samples/4)  + ["GE"] * int(n_samples/4)  + ["Magnetom"] * int(n_samples/4) )
     # Construct mixed effects model to add some batch and covariate effects
     # Define age between 20 and 80 from normal distribution
     variable_names = ['Sex', 'Age']
@@ -47,13 +44,13 @@ def test_full_pipeline_generates_report(tmp_path = save_dir):
         for j in range(n_features):
             if batch[i] == "Siemens":
                 # Draw from a normal distribution with a higher mean, normaly distribute positive shift along features
-                data[i, j] += np.random.normal(loc=1.6, scale=1.0)
+                data[i, j] += np.random.normal(loc=0.7, scale=1.0)
             elif batch[i] == "Philips":
                 data[i, j] += np.random.normal(loc=0.25, scale=2.0)
             elif batch[i] == "GE":
                 data[i, j] += np.random.normal(loc=-0.25, scale=2.5)
             elif batch[i] == "Magnetom":
-                data[i, j] += np.random.normal(loc=-0.9, scale=0.6)
+                data[i, j] += np.random.normal(loc=-0.7, scale=0.6)
                 
     # Simulate covariate effect of age and sex (when age increases, feature values decrease) 
     # (when sex = 0/1 (female/male), feature values decrease/increase to simulate volume differences)
@@ -66,7 +63,7 @@ def test_full_pipeline_generates_report(tmp_path = save_dir):
     # -------------------------
     # Where to save the report
     # -------------------------
-    Report_name="Test_run"
+    Report_name="Test_no_missing"
     out_dir = tmp_path
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -74,6 +71,7 @@ def test_full_pipeline_generates_report(tmp_path = save_dir):
     # Run the DiagnosticReport
     # -------------------------
     timestamped_reports = False
+
     try:
         # call signature:
         # DiagnosticReport(data, batch, covariates=None, variable_names=None,
@@ -90,91 +88,48 @@ def test_full_pipeline_generates_report(tmp_path = save_dir):
                                 SaveArtifacts=False, # Whether to save artifacts, default False
                                     rep=None, # Optional: report object
                                         show=False, # Whether to display the report, default False
-                                        timestamped_reports=False # Whether to use timestamped report names
+                                        timestamped_reports=timestamped_reports # Whether to use timestamped report names
                                             
-        )
-        # Run harmoisation and generate report
-        from DiagnoseHarmonization import HarmonizationFunctions
-
-        data_harmonized = HarmonizationFunctions.combat(data, batch, mod=covariates)
-        DiagnosticReport.CrossSectionalReport(
-            data=data_harmonized, # Required: data matrix (samples x features)
-                batch=batch, # Required: batch vector (samples,)
-                    covariates=covariates, # Optional: covariate matrix (samples x covariates)
-                        covariate_names=variable_names, # Optional: names of covariates
-                            save_dir=str(out_dir), # Optional: directory to save report
-                            save_data=True, # Whether to save data used in report, default False
-                                report_name=Report_name+"_Harmonized", # Optional: base name of report file
-                                SaveArtifacts=False, # Whether to save artifacts, default False
-                                    rep=None, # Optional: report object
-                                        show=False, # Whether to display the report, default False
-                                        timestamped_reports=False # Whether to use timestamped report names
         )
 
     except Exception as e:
         # If the pipeline raises, fail the test but show exception
         pytest.fail(f"DiagnosticReport raised an exception: {e}")
+    Report_name="Test_missing"
+    out_dir.mkdir(parents=True, exist_ok=True)
 
-    # -------------------------
-    # Find the generated report
-    # -------------------------
+
+    # Remove random data from 2 batches (i.e set to zero) to simulate missing data and test that the report can handle this without crashing
+    # For each feature, randomly select 10% of samples from Siemens and 10% of samples from Philips to set to zero (simulate missing data)
+    for j in range(n_features):
+        # Get indices of Siemens and Philips samples
+        siemens_indices = np.where(batch == "Siemens")[0]
+        philips_indices = np.where(batch == "Philips")[0]
+        # Randomly select 10% of indices from each batch
+        siemens_missing = np.random.choice(siemens_indices, size=int(0.1 * len(siemens_indices)), replace=False)
+        philips_missing = np.random.choice(philips_indices, size=int(0.1 * len(philips_indices)), replace=False)
+        # Set selected indices to zero (simulate missing data)
+        data[siemens_missing, j] = np.nan
+        data[philips_missing, j] = np.nan
     
-    # Check for report with expected name pattern defined by variable Report_name
-
-    if Report_name is None:
-        Report_name = "DiagnosticReport"
-        if timestamped_reports == True or timestamped_reports == None:
-        # If timestamped, we need to match the pattern with wildcard
-            Report_name = "DiagnosticReport"
-            reports = sorted(out_dir.glob(f"{Report_name}_*.html"))
-            assert len(reports) > 0, f"HTML with the right name file was not generated, expected pattern: looked for file: {Report_name}_*.html in {out_dir}"
-    else:   
-        reports = sorted(out_dir.glob(f"{Report_name}*.html"))
-        print(reports)
-        assert len(reports) > 0, f"HTML with the right name file was not generated, expected pattern: looked for file: {Report_name}*.html in {out_dir}"
-
-    # pick the most recent report
-    report_path = reports[-1]
-
-    # Basic sanity checks
-    assert report_path.exists() and report_path.stat().st_size > 100, "Report file is missing or unexpectedly small."
-
-    # Print the full path so the tester can open it manually; -s flag required to see this in pytest output
-    print("\n==== Diagnostic report generated ====")
-    print(f"Report path: {report_path}")
-    print("Open this file in your browser to view the report.")
-    print("====================================\n")
-
-    # Success
-    assert True
-    #%%
-    covariate_cat = np.random.randint(0, 1, size=n_samples)    # categorical
-    print( covariate_cat)
-
-
-def test_min_script(tmp_path=save_dir):
-    """
-    Test that the minimal script runs without error and produces a report.
-    This is a more basic test than test_full_pipeline_generates_report, and can be used to quickly check that the core functionality of DiagnosticReport is working.
-    """
-    # Minimal data and batch
-    data = np.random.randn(100, 20)
-    batch = np.array(["A"] * 50 + ["B"] * 50)
-    # Run DiagnosticReport with minimal inputs
     try:
-        from DiagnoseHarmonization import DiagnosticReport
-        DiagnosticReport.CrossSectionalReportMin(
-            data=data,
-            batch=batch,
-            save_dir=str(tmp_path),
-            report_name="Minimal_Test",
-            show=False,
-            timestamped_reports=False,
-            save_data=False
+
+        DiagnosticReport.CrossSectionalReport(
+            data=data, # Required: data matrix (samples x features)
+                batch=batch, # Required: batch vector (samples,)
+                    covariates=covariates, # Optional: covariate matrix (samples x covariates)
+                        covariate_names=variable_names, # Optional: names of covariates
+                            save_dir=str(out_dir), # Optional: directory to save report
+                            save_data=True, # Whether to save data used in report, default False
+                                report_name=Report_name+"_missing", # Optional: base name of report file
+                                SaveArtifacts=False, # Whether to save artifacts, default False
+                                    rep=None, # Optional: report object
+                                        show=False, # Whether to display the report, default False
+                                        timestamped_reports=timestamped_reports # Whether to use timestamped report names
+                                            
         )
     except Exception as e:
-        pytest.fail(f"DiagnosticReport raised an exception in minimal script: {e}")
-
-    # Check that report was generated
-    report_path = Path(tmp_path) / "Minimal_Test.html"
-    assert report_path.exists() and report_path.stat().st_size > 100, "Minimal script did not generate expected report."
+        # If the pipeline raises, fail the test but show exception
+        pytest.fail(f"DiagnosticReport raised an exception: {e}")
+    Report_name="Test_missing"
+    out_dir.mkdir(parents=True, exist_ok=True)

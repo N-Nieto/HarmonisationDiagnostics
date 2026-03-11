@@ -1,14 +1,6 @@
 """
 
 Script containing self contained harmonization functions that can be used in conjunction with the diagnostic tools:
-
-ComBat:
-    Run ComBat harmonization on the data and return the harmonized data:
-lme_harmonization:
-    Run harmonization via linear mixed effects model on the data and return the residualized data
-CovBat:
-    Run CovBat harmonization on the data and return the harmonized data
-
 """
 
 import numpy as np
@@ -20,32 +12,9 @@ import numpy.linalg as la
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
 
-def combat_temp_for_covbat(data, batch, model=None, numerical_covariates=None, eb=True):
+def combat_for_covbat(data, batch, model=None, numerical_covariates=None, eb=True):
     """Correct for batch effects in a dataset
-
-    Parameters
-    ----------
-    data : pandas.DataFrame
-        A (n_features, n_samples) dataframe of the expression or methylation
-        data to batch correct
-    batch : pandas.Series
-        A column corresponding to the batches in the data, with index same as
-        the columns that appear in ``data``
-    model : patsy.design_info.DesignMatrix, optional
-        A model matrix describing metadata on the samples which could be
-        causing batch effects. If not provided, then will attempt to coarsely
-        correct just from the information provided in ``batch``
-    numerical_covariates : list-like
-        List of covariates in the model which are numerical, rather than
-        categorical
-    eb : logical
-        Should empirical Bayes adjustments be made, if FALSE then gamma_hat
-        and delta_hat are used as correction
-
-    Returns
-    -------
-    corrected : pandas.DataFrame
-        A (n_features, n_samples) dataframe of the batch-corrected data
+    This function is a modified version of the ComBat harmonization function that is used as part of the CovBat harmonization process. 
     """
     if isinstance(numerical_covariates, str):
         numerical_covariates = [numerical_covariates]
@@ -145,6 +114,7 @@ def combat_temp_for_covbat(data, batch, model=None, numerical_covariates=None, e
     return bayesdata
 
 def design_mat(mod, numerical_covariates, batch_levels):
+    """Construct design matrix for ComBat, ensuring batch levels are in the correct order and handling numerical covariates."""
     # require levels to make sure they are in the same order as we use in the
     # rest of the script.
     design = patsy.dmatrix("~ 0 + C(batch, levels=%s)" % str(batch_levels),
@@ -171,23 +141,27 @@ def design_mat(mod, numerical_covariates, batch_levels):
 # --------------------- Placeholder helper functions ---------------------
 # Translated from MATLAB, need to have concistency checked with NeuroComBat
 def aprior(delta_hat):
+    """Calculate the aprior parameter for the inverse gamma distribution based on the method of moments."""
     m = np.mean(delta_hat)
     s2 = np.var(delta_hat,ddof=1)
     return (2 * s2 +m**2) / float(s2)
 
 def bprior(delta_hat):
+    """Calculate the bprior parameter for the inverse gamma distribution based on the method of moments."""
     m = delta_hat.mean()
     s2 = np.var(delta_hat,ddof=1)
     return (m*s2+m**3)/s2
 
 def postmean(g_hat, g_bar, n, d_star, t2):
+    """Calculate the posterior mean for the batch effect parameters."""
     return (t2*n*g_hat+d_star * g_bar) / (t2*n+d_star)
 
 def postvar(sum2, n, a, b):
+    """Calculate the posterior variance for the batch effect parameters."""
     return (0.5 * sum2 + b) / (n / 2.0 + a - 1.0)
 
 def itSol(sdat_batch, gamma_hat, delta_hat, gamma_bar, t2, a, b, conv=0.001):
-
+    """Iteratively solve for the posterior mean and variance of the batch effect parameters."""
     g_old = gamma_hat
     d_old = delta_hat
     change = 1
@@ -207,6 +181,10 @@ def itSol(sdat_batch, gamma_hat, delta_hat, gamma_bar, t2, a, b, conv=0.001):
     return np.vstack([g_new, d_new])
 
 def it_sol(sdat, g_hat, d_hat, g_bar, t2, a, b, conv=0.0001):
+    """Iteratively solve for the posterior mean and variance of the batch effect parameters.
+    This version is used by CovBat and taken from: https://github.com/andy1764/CovBat_Harmonization
+    Chen, A. A., Beer, J. C., Tustison, N. J., Cook, P. A., Shinohara, R. T., Shou, H., & Initiative, T. A. D. N. (2022). Mitigating site effects in covariance for machine learning in neuroimaging data. Human Brain Mapping, 43(4), 1179–1195. https://doi.org/10.1002/hbm.25688)
+    """
     n = (1 - np.isnan(sdat)).sum(axis=1)
     g_old = g_hat.copy()
     d_old = d_hat.copy()
@@ -233,7 +211,7 @@ def adjust_nums(numerical_covariates, drop_idxs):
 
 # ----------------------------- Main functions -----------------------------
 # Define ComBat harmonization function
-def combat(data, batch, mod, parametric,
+def combat(data, batch, mod, parametric=True,
            DeltaCorrection=True, UseEB=True, ReferenceBatch=None,
            RegressCovariates=False, GammaCorrection=True, covbat_mode=False,return_priors=False):
     """
@@ -245,6 +223,39 @@ def combat(data, batch, mod, parametric,
     The returned bayesdata is the same type as input data (DataFrame -> DataFrame, ndarray -> ndarray).
 
     Note: helper functions aprior, bprior, itSol must be defined in scope.
+
+    Args:
+        data (np.array or pd.DataFrame): The data matrix to be harmonized, with shape (n_features, n_samples).
+        batch (np.array or pd.Series): A vector of batch labels for each sample, with length n_samples.
+        mod (np.array or pd.DataFrame, optional): An optional design matrix of covariates to adjust for, with shape (n_samples, n_covariates).
+        parametric (bool, optional): Whether to use parametric adjustments. Default is True.
+        DeltaCorrection (bool, optional): Whether to apply delta (scale) correction. Default is True.
+        UseEB (bool, optional): Whether to use empirical Bayes adjustments. Default is True.
+        ReferenceBatch (str or int, optional): If provided, the name or index of the reference batch to use for fitting priors. Default is None (no reference).
+        RegressCovariates (bool, optional): Whether to regress out covariate effects before harmonization. Default is False.
+        GammaCorrection (bool, optional): Whether to apply gamma (mean) correction. Default is True.
+        covbat_mode (bool, optional): Whether to run in CovBat mode which includes additional covariance correction steps. Default is False.
+        return_priors (bool, optional): Whether to return the estimated parameters from the ComBat model along with the harmonized data. Default is False.
+
+    Returns:
+        bayesdata (np.array or pd.DataFrame): The harmonized data, in the same format as the input data.
+        priors (dict, optional): A dictionary containing the estimated parameters from the ComBat model, including:
+            - gamma_hat: raw batch effect mean estimates (n_batch, n_features)
+            - delta_hat: raw batch effect variance estimates (n_batch, n_features)
+            - gamma_star: empirical Bayes adjusted batch effect means (n_batch, n_features)
+            - delta_star: empirical Bayes adjusted batch effect variances (n_batch, n_features)
+            - gamma_bar: mean of gamma_hat across batches (n_batch,)
+            - t2: variance of gamma_hat across batches (n_batch,)
+            - a_prior: aprior parameters for each batch (n_batch,)
+            - b_prior: bprior parameters for each batch (n_batch,)  
+ 
+    Note:
+    If using this version of ComBat, please cite:
+
+    Jean-Philippe Fortin, Drew Parker, Birkan Tunc, Takanori Watanabe, Mark A Elliott, Kosha Ruparel, David R Roalf, Theodore D Satterthwaite, Ruben C Gur, Raquel E Gur, Robert T Schultz, Ragini Verma, Russell T Shinohara. Harmonization Of Multi-Site Diffusion Tensor Imaging Data. NeuroImage, 161, 149-170, 2017
+    Jean-Philippe Fortin, Nicholas Cullen, Yvette I. Sheline, Warren D. Taylor, Irem Aselcioglu, Philip A. Cook, Phil Adams, Crystal Cooper, Maurizio Fava, Patrick J. McGrath, Melvin McInnis, Mary L. Phillips, Madhukar H. Trivedi, Myrna M. Weissman, Russell T. Shinohara. Harmonization of cortical thickness measurements across scanners and sites. NeuroImage, 167, 104-120, 2018
+    W. Evan Johnson and Cheng Li, Adjusting batch effects in microarray expression data using empirical Bayes methods. Biostatistics, 8(1):118-127, 2007.
+
     """
     import pandas as pd
     import numpy as np
@@ -583,7 +594,7 @@ def combat(data, batch, mod, parametric,
         # batch : whatever your function needs
         # stand_mean : either shape (n_features,) or (n_features, 1)
         # data (optional) : original pandas DataFrame if you want to keep sample names
-        # combat_temp_for_covbat : your function (may accept numpy or pandas)
+        # combat_for_covbat : your function (may accept numpy or pandas)
 
         # Optional: keep sample names in an array if you still want them
         # If you don't have `data`, just omit this.
@@ -618,7 +629,7 @@ def combat(data, batch, mod, parametric,
         # slice the scores to the first npc components
         scores = full_scores[:npc, :]               # shape (npc, n_samples)
 
-        # If combat_temp_for_covbat accepts numpy arrays, call directly:
+        # If combat_for_covbat accepts numpy arrays, call directly:
         
         scores_com = combat(scores, batch, mod=None, parametric=True,UseEB=False)
         
@@ -662,6 +673,9 @@ def combat(data, batch, mod, parametric,
     else:
         bayesdata = (bayesdata * (np.sqrt(var_pooled)[:, None])) + stand_mean
     
+    # Flip bayes data back if we transposed at the start
+    if dat_transposed:
+        bayesdata = bayesdata.T
     if return_priors:
         # create dictionary of priors, bayes data and beta coefficients for covariates:
         data = {
@@ -683,32 +697,20 @@ def combat(data, batch, mod, parametric,
 def covbat(data, batch, model=None, numerical_covariates=None, pct_var=0.95, n_pc=0):
 
     """Correction of *Cov*ariance *Bat* effects
+    This function applies the ComBat harmonization procedure to the data, then applies an additional covariance correction step via PCA and re-application of ComBat on the PCA scores. This method is based on the CovBat approach described in Chen et al. 2022.  
 
-    Parameters
-    ----------
-    data : pandas.DataFrame
-        A (n_features, n_samples) dataframe of the expression or methylation
-        data to batch correct
-    batch : pandas.Series
-        A column corresponding to the batches in the data, with index same as
-        the columns that appear in ``data``
-    model : patsy.design_info.DesignMatrix, optional
-        A model matrix describing metadata on the samples which could be
-        causing batch effects. If not provided, then will attempt to coarsely
-        correct just from the information provided in ``batch``
-    numerical_covariates : list-like
-        List of covariates in the model which are numerical, rather than
-        categorical
-    pct_var : numeric
-        Numeric between 0 and 1 indicating the percent of variation that is
-        explained by the adjusted PCs
-    n_pc : numeric
-        If >0, then this specifies the number of PCs to adjust. Overrides pct_var
+    Args:
+        data (np.array or pd.DataFrame): The data matrix to be harmonized, with shape (n_features, n_samples).
+        batch (np.array or pd.Series): A vector of batch labels for each sample, with length n_samples.
+        model (pd.DataFrame, optional): An optional design matrix of covariates to adjust for, with shape (n_samples, n_covariates). Must include a column named "batch" with the batch labels. If None, a design matrix will be created with only the batch variable. Default is None.
+        numerical_covariates (list of str or list of int, optional): A list of column names or indices in the model design matrix that correspond to numerical covariates (as opposed to categorical). These covariates
+    will be included in the design matrix but not treated as batch variables. Default is None (no numerical covariates).
 
-    Returns
-    -------
-    corrected : pandas.DataFrame
-        A (n_features, n_samples) dataframe of the batch-corrected data
+    If using this version of CovBat, please cite:
+    Note:
+        Chen, A. A., Beer, J. C., Tustison, N. J., Cook, P. A., Shinohara, R. T., Shou, H., & Initiative, T. A. D. N. (2022). 
+        Mitigating site effects in covariance for machine learning in neuroimaging data. 
+        Human Brain Mapping, 43(4), 1179–1195. https://doi.org/10.1002/hbm.25688)
     """
     if isinstance(numerical_covariates, str):
         numerical_covariates = [numerical_covariates]
@@ -813,7 +815,7 @@ def covbat(data, batch, model=None, numerical_covariates=None, pct_var=0.95, n_p
     if n_pc > 0:
         npc = n_pc
     scores = full_scores.loc[range(0,npc),:]
-    scores_com = combat_temp_for_covbat(scores, batch, model=None, eb=False)
+    scores_com = combat_for_covbat(scores, batch, model=None, eb=False)
     full_scores.loc[range(0,npc),:] = scores_com
 
     x_covbat = bayesdata - bayesdata # create pandas DataFrame to store output
@@ -832,23 +834,19 @@ from statsmodels.formula.api import mixedlm
 
 def lme_harmonization(data, batch, mod, variable_names):
     """
-    Fit per-feature linear mixed-effects models and return residualised data.
+    Fits a per feature linear mixed model to harmonize data across batches while adjusting for covariates. This function is an alternative to ComBat that uses mixed effects modeling to estimate and remove batch effects.
 
-    Accepts numpy arrays or pandas DataFrame/Series:
-      - data: samples x features  (np.ndarray) or pandas.DataFrame (rows=samples, cols=features)
-      - batch: length-n_samples array-like or pandas.Series with batch labels (grouping factor)
-      - mod: n_samples x n_covariates (np.ndarray) or pandas.DataFrame
-      - variable_names: list of length n_covariates naming covariates (strings)
-
+    Args:
+        data (pd.DataFrame or np.array): The data matrix to be harmonized, with shape (n_samples, n_features).
+        batch (pd.Series or np.array): A vector of batch labels for each sample, with length n_samples.
+        mod (pd.DataFrame or np.array): A design matrix of covariates to adjust for, with shape (n_samples, n_covariates).
+        variable_names (list of str): A list of column names corresponding to the covariates in `mod`, used for formula construction.
     Returns:
-      - residuals: same type as input `data` (DataFrame if DataFrame input, ndarray otherwise),
-                   with shape (n_samples, n_features)
+        np.array: A harmonized data matrix of the same shape as the input `data`, with batch effects removed according to the fitted mixed models.
+    
+    Note:
+        This function fits a separate linear mixed model for each feature (column) in the data matrix, with the batch variable as a random effect and the covariates as fixed effects. The residuals from these models are returned as the harmonized data.
 
-    Notes:
-      - This fits a mixed-effects model separately for each feature/column in `data`.
-      - Formula used for each feature: Y ~ batch + covariates + batch:cov1 + batch:cov2 + ...
-        Random intercept for batch (groups=batch) is used.
-      - The residuals returned have batch (and covariate) effects removed.
     """
     # ----------------------------
     # Normalize inputs & keep labels
@@ -983,23 +981,9 @@ def lme_harmonization(data, batch, mod, variable_names):
 def lme_iqm_harmonization(data, IQMs, mod, variable_names):
     # Run LME harmonization on IQMs to get resisuals:
     """
-    inputs:
-    - data: subjects x features (np.ndarray)
-    - IQMs: subjects x IQMs (np.ndarray)
-    - mod:  subjects x covariates (np.ndarray)
-    - variable_names: covariates (list)
-    returns:
-    - residuals: subjects x features (np.ndarray)
-    - params: dict of LME model parameters
-    - original: subjects x features (np.ndarray)
-
-    description: 
-    This function attempts to fit a mixed effects model on the data using IQMs as mixed effects and covariates as fuxed effects.
-    The residuals of the model are returned as the harmonized data, with covariate effects retained and IQM effects removed:
-
-
-
-    """
+    Place holder for future implementation of LME-IQM harmonization. 
+    When batch labels not given, or when batch size is very small, IQMs may hold more information than batch labels."""
+    
     print("Place holder for future implementation of LME-IQM harmonization")
 
     return None
