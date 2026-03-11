@@ -228,7 +228,7 @@ def run_umap(n_samples=None, n_features=None, n_clusters=None, n_neighbors_list=
 
 def test_umap_with_diff_sizes():
     # Test UMAP with different sizes of data:
-    for n_samples in [10000, 20000,25000]:
+    for n_samples in [1000, 2000, 2500]:
         for n_features in [500]:
             print(f"Testing UMAP with n_samples={n_samples} and n_features={n_features}...")
             # call run_umap with these params

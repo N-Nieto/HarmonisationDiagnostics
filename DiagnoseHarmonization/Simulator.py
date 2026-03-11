@@ -13,55 +13,115 @@ covariates = st.multiselect("Select Covariates to Simulate",
                             options=["Age", "Sex", "Diagnosis"],
                             default=["Age"])
 batch_additive_severity = st.slider("Batch Mean Effect Severity", min_value=0.0, max_value=10.0, value=0.0, step=0.1)
-batch_multiplicative_severity = st.slider("Batch Variance Effect Severity", min_value=0.1, max_value=3.0, value=1.0, step=0.1)
+batch_multiplicative_severity = st.slider("Batch Variance Effect Severity", min_value=0.1, max_value=5.0, value=1.0, step=0.1)
 
 # Run simulation and store results in session_state so they persist across reruns
 if st.button("Run Simulation"):
     st.write("Generating Data...")
     total_samples = number_batches * samples_per_batch
 
-    # Base data, randomly drawn from normal distribution around zero
-    data = np.random.randn(total_samples, feature_dim)
+    # ------------------------
+    # Base data: treat columns as 'z-score-like' but centered around 1 (i.e. N(1, 1))
+    # ------------------------
+    # Draw base values from N(1, 1) so each feature ~ mean 1, sd 1 before batch effects
+    data = np.random.randn(total_samples, feature_dim) + 1.0
 
+    # ------------------------
     # Covariates
+    # ------------------------
     covariate_data = pd.DataFrame(index=range(total_samples))
     if "Age" in covariates:
-        covariate_data["Age"] = 20 + 60 * np.random.rand(total_samples) # Age range 20-80
+        covariate_data["Age"] = 20 + 60 * np.random.rand(total_samples)  # Age range 20-80
     if "Sex" in covariates:
         covariate_data["Sex"] = np.random.randint(0, 2, size=total_samples)
     if "Diagnosis" in covariates:
         covariate_data["Diagnosis"] = np.random.randint(0, 5, size=total_samples)
 
+    # ------------------------
     # Batch labels
+    # ------------------------
     batch_labels = np.array([f"Batch_{i+1}" for i in range(number_batches) for _ in range(samples_per_batch)])
 
-    # Introduce batch effects (vectorized where possible)
-    scale_severity = np.linspace(1, batch_multiplicative_severity, number_batches)  # per-batch shapes
-    add_severity = np.linspace(-batch_additive_severity, batch_additive_severity, number_batches)  # per-batch locs
+    # ------------------------
+    # Batch effect parameters (per-batch)
+    # - multiplicative scale: controls spread (sd) of the distribution for that batch
+    #   we allow some batches to be narrower (<1) and some wider (>1) by using a reciprocal range
+    # - additive shift: controls mean shift (location) per batch
+    # ------------------------
+    # defensive: if user sets multiplicative severity <= 0, clamp to 1 (no multiplicative change)
+    mult_sev = float(batch_multiplicative_severity) if batch_multiplicative_severity is not None else 1.0
+    if mult_sev <= 0:
+        mult_sev = 1.0
 
-    # Loop over batches but avoid inner-most redundant loops where possible
+    # Create per-batch scale factors spanning [1/mult_sev, mult_sev] so some batches can be narrower (<1)
+    if mult_sev == 1.0:
+        scale_factors = np.ones(number_batches)
+    else:
+        scale_factors = np.linspace(1.0 / mult_sev, mult_sev, number_batches)
+
+    # Per-batch additive mean shifts spanning [-batch_additive_severity, +batch_additive_severity]
+    add_shifts = np.linspace(-batch_additive_severity, batch_additive_severity, number_batches)
+
+    # ------------------------
+    # Apply batch effects (vectorized inside loop per-batch)
+    # - interpret data as deviations from 1.0 (since base ~N(1,1))
+    # - scale those deviations to make distribution wider/narrower
+    # - add a per-batch mean shift
+    # - also add small per-feature batch offsets and small extra noise proportional to scale
+    # ------------------------
     for i in range(number_batches):
         start = i * samples_per_batch
         end = start + samples_per_batch
 
-        # Apply additive and multiplicative effects, one specific scaling term per batch per feature (solumn)
-        # Draw from inverse gamma for each feature in the batch, equivalent to delta * epsilon per feature where epsilon ~ N(0,1) and is the subject specific measurement noise
-        data[start:end, :] = (data[start:end, :] * np.random.gamma(shape=2.0/scale_severity[i], scale=scale_severity[i], size=(samples_per_batch, feature_dim)))
+        sf = float(scale_factors[i])           # multiplicative spread factor for this batch
+        mu_shift = float(add_shifts[i])        # additive mean shift for this batch
 
-        # Additive effect drawn from random normal distribution across features per batch, centered around the batch-specific loc
-        data[start:end, :] += np.random.normal(loc=add_severity[i], scale=0.1, size=(samples_per_batch, feature_dim))
+        # Extract slice
+        batch_slice = data[start:end, :]      # shape (samples_per_batch, feature_dim)
 
+        # 1) Feature-specific batch offsets (small): some features shift more in some batches
+        feature_offsets = np.random.normal(loc=0.0, scale=0.5, size=(feature_dim,))  # tiny per-feature shift
 
-    # Covariate effects (vectorized), assume same distribution across batches, severity is fixed across features here for simplicity (this is an unrealistic assumption that almost never holds)
+        # 2) Compute deviations from 1.0 (z-score-like origin) and scale them
+        deviations = batch_slice - 1.0
+        scaled = 1.0 + deviations * sf
+
+        # 3) Add batch-level mean shift (same across features) and feature offsets
+        scaled += mu_shift
+        scaled += feature_offsets.reshape(1, -1)
+
+        # 4) Add residual per-sample-per-feature noise whose sd grows with sf (so wider batches also noisier)
+        noise_sd = 0.8 * max(1.0, sf)  # base small noise, scales up if sf>1
+        extra_noise = np.random.normal(loc=0.0, scale=noise_sd, size=(samples_per_batch, feature_dim))
+
+        # Write back
+        data[start:end, :] = scaled + extra_noise
+
+    # ------------------------
+    # Covariate effects (vectorized) — more realistic: per-feature coefficients (small, heterogeneous)
+    # ------------------------
+    rng = np.random.RandomState(42)  # reproducible small heterogeneity in coefficients
+
     if "Age" in covariates:
+        # Coefficients ~ N(-0.05, 0.01) per feature (older reduces signal slightly on average)
+        age_coefs = rng.normal(loc=-0.05, scale=0.01, size=(feature_dim,))
         age_centered = covariate_data["Age"].values - covariate_data["Age"].mean()
-        data += (-0.05) * age_centered.reshape(-1, 1)
+        data += age_centered.reshape(-1, 1) * age_coefs.reshape(1, -1)
+
     if "Sex" in covariates:
+        # Sex effect small and sparse: some features strongly influenced, most weakly
+        sex_base = 0.25
+        sex_coefs = rng.normal(loc=sex_base, scale=0.05, size=(feature_dim,))
         sex_centered = covariate_data["Sex"].values - covariate_data["Sex"].mean()
-        data += (0.25) * sex_centered.reshape(-1, 1) 
+        data += sex_centered.reshape(-1, 1) * sex_coefs.reshape(1, -1)
+
     if "Diagnosis" in covariates:
+        # Diagnosis is categorical 0-4: give an increasing additive trend across categories with per-feature variation
+        diag_base = 0.5
+        diag_coefs = rng.normal(loc=diag_base, scale=0.1, size=(feature_dim,))
         diag_centered = covariate_data["Diagnosis"].values - covariate_data["Diagnosis"].mean()
-        data += (0.5) * diag_centered.reshape(-1, 1)
+        data += diag_centered.reshape(-1, 1) * diag_coefs.reshape(1, -1)
+
 
     # Save to session_state
     st.session_state["data"] = data
@@ -116,16 +176,73 @@ if st.button("Generate Cross-Sectional Report"):
         batch_labels = st.session_state["batch_labels"]
         covariate_data = st.session_state["covariate_data"]
         st.write("Generating Cross-Sectional Report...")
+        if np.unique(batch_labels).shape[0] > 3:
+            SaveArtifacts = False
+        else:
+            SaveArtifacts = True
+
         report = DiagnosticReport.CrossSectionalReport(data,
                                                         batch_labels,
                                                           covariate_data,
                                                             covariate_names=covariate_data.columns.tolist(),
                                                                 save_dir=".",
-                                                                    save_data=False,
+                                                                    save_data=True,
                                                                     report_name="Simulator_Report",
-                                                                        SaveArtifacts=False,
+                                                                        SaveArtifacts=SaveArtifacts,
                                                                         rep=None,
                                                                             show=False
                                                           )
         report_filename = "Simulator_Report.html"
         st.write(f"Report generated and saved as {report_filename}. You can open this file in your web browser to view the report.")
+
+# Add a final option to harmonise the data using ComBat, run the report again on the harmonised data, and provide download link for harmonised data and unharmonised data as a csv file
+
+if st.button("Harmonize Data with ComBat and Generate Report"):
+    if "data" not in st.session_state:
+        st.warning("No data yet — please click **Run Simulation** to generate data before harmonizing.")
+    else:
+        from DiagnoseHarmonization import DiagnosticReport
+        from DiagnoseHarmonization import HarmonizationFunctions
+        data = st.session_state["data"]
+        batch_labels = st.session_state["batch_labels"]
+        covariate_data = st.session_state["covariate_data"]
+        st.write("Harmonizing Data with ComBat...")
+        [harmonized_data, _,_] = HarmonizationFunctions.combat(data.T, batch_labels, covariate_data, parametric=True)
+        harmonized_data = harmonized_data.T  # Transpose back to original shape
+        st.write("Generating Cross-Sectional Report on Harmonized Data...")
+        SaveArtifacts = False
+
+        report = DiagnosticReport.CrossSectionalReport(harmonized_data,
+                                                        batch_labels,
+                                                          covariate_data,
+                                                            covariate_names=covariate_data.columns.tolist(),
+                                                                save_dir=".",
+                                                                    save_data=True,
+                                                                    report_name="Simulator_Harmonized_Report",
+                                                                        SaveArtifacts=SaveArtifacts,
+                                                                        rep=None,
+                                                                            show=False
+                                                          )
+        report_filename = "Simulator_Harmonized_Report.html"
+        st.write(f"Harmonized report generated and saved as {report_filename}. You can open this file in your web browser to view the report.")
+
+        # Provide download links for harmonized and unharmonized data
+        unharmonized_df = pd.DataFrame(data)
+        harmonized_df = pd.DataFrame(harmonized_data)
+
+        unharmonized_csv = unharmonized_df.to_csv(index=False).encode('utf-8')
+        harmonized_csv = harmonized_df.to_csv(index=False).encode('utf-8')
+
+        st.download_button(
+            label="Download Unharmonized Data as CSV",
+            data=unharmonized_csv,
+            file_name='unharmonized_data.csv',
+            mime='text/csv',
+        )
+
+        st.download_button(
+            label="Download Harmonized Data as CSV",
+            data=harmonized_csv,
+            file_name='harmonized_data.csv',
+            mime='text/csv',
+        )
