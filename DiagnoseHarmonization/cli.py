@@ -83,13 +83,36 @@ def run_pipeline_from_cli(data_path: str,
                           save_data: bool = True,
                           save_data_name: str = None) -> Optional[Dict[str, Any]]:
     # 1) read CSVs
+    """
     if verbose:
         print(f"Reading data from: {data_path}")
+    # Check file type by extension (basic check)
     data_df = pd.read_csv(data_path, header=0)
     if verbose:
         print(f"Reading covariates from: {cov_path}")
-    cov_df = pd.read_csv(cov_path, header=0)
+    cov_df = pd.read_csv(cov_path, header=0)"""
+    # 1) # Check data type by extension, use appropriate pandas reader
+    if verbose:
+        print(f"Reading data from: {data_path}")
+    if data_path.lower().endswith(".csv"):
+        data_df = pd.read_csv(data_path, header=0)
+    elif data_path.lower().endswith((".xls", ".xlsx")):
+        data_df = pd.read_excel(data_path, header=0)
+    else:
+        raise ValueError(f"Unsupported data file format for '{data_path}'. Supported: .csv, .xls, .xlsx")
+    if verbose:
+        print(f"Reading covariates from: {cov_path}")
+    if cov_path.lower().endswith(".csv"):
+        cov_df = pd.read_csv(cov_path, header=0)
+    elif cov_path.lower().endswith((".xls", ".xlsx")):
+        cov_df = pd.read_excel(cov_path, header=0)
+    else:
+        raise ValueError(f"Unsupported covariates file format for '{cov_path}'. Supported: .csv, .xls, .xlsx")
 
+    # Add in support for other file formats (e.g. Excel) if needed in the future, by checking file extension and using pd.read_excel etc.
+
+
+    
     # 1a) basic checks
     if data_df.shape[0] == 0 or data_df.shape[1] == 0:
         raise ValueError("Data file appears empty or malformed.")
@@ -135,6 +158,9 @@ def run_pipeline_from_cli(data_path: str,
     data_sub, cov_sub = validate_subject_ids(data_df, cov_df, data_id_col, cov_id_col)
 
     # 5) extract feature matrix: data_sub columns are assumed to be IDPs (excluding subject id col which is index)
+    # Check for bad formatting (eg e+ notation that can't be converted to float) and try and convert it if needed
+    data_sub = data_sub.apply(pd.to_numeric, errors='coerce')
+
     X = data_sub.astype(float).values  # shape: (n_subjects, n_features)
     feature_names = list(data_sub.columns)
 

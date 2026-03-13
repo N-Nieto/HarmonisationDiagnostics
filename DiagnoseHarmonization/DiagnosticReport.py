@@ -624,6 +624,8 @@ def CrossSectionalReport(
         line_break_in_text = "-" * 125
         report.text_simple("This is the full diagnostic cross-sectional report that includes a comprehensive set of tests and visualizations to assess batch effects in the dataset. \n\n")
 
+        report.text_simple("For full documentation and interpretation of each test, please refer to the online documentation at https://jake-turnbull.github.io/HarmonizationDiagnostics/")
+
         # Basic dataset summary
         report.text_simple("Summary of dataset:")
         report.text_simple(line_break_in_text)
@@ -679,6 +681,8 @@ def CrossSectionalReport(
             else:
                 report.text_simple(f"Batch {b} has a proportion of missing data: {prop_nans:.2%}")
 
+        
+
         # Replace NaNs with structured noise of mean and variance of each batch:
         for b in unique_batches:
             batch_mask = (batch == b)
@@ -694,10 +698,112 @@ def CrossSectionalReport(
             # Replace in original data
             data[batch_mask, :] = batch_data
 
+        # Check if any columns still have NaNs, if this has happened, its because all data had missing data for that batch, so we fill with global mean and std:
+        nan_mask_after = np.isnan(data)
+        if np.any(nan_mask_after):
+            global_mean = np.nanmean(data, axis=0)
+            global_std = np.nanstd(data, axis=0)
+            for i in range(data.shape[0]):
+                for j in range(data.shape[1]):
+                    if np.isnan(data[i, j]):
+                        data[i, j] = np.random.normal(loc=global_mean[j], scale=global_std[j])
+                        # Warn user that this has happened in the report and that this feature will not be reliable for diagnostics:
+                        # Check if covariate names given to give index and name of feature with all NaNs:
+                        if feature_names is not None and j < len(feature_names):
+                            feature_name = feature_names[j]
+                        else:                           
+                            feature_name = f"index {j}"
+                        logger.warning(f"Feature {feature_name} has all missing data for at least one batch. NaNs in this feature have been replaced with global mean and std, which may not be reliable for diagnostics.")
+
+        # Final check; if there are still NaNs it is because whole column for all batches is NaN, so we set all values to 1 and log a warning that this feature will not be reliable for diagnostics:
+        nan_mask_final = np.isnan(data)
+        if np.any(nan_mask_final):
+            for j in range(data.shape[1]):
+                if np.any(nan_mask_final[:, j]):
+                    data[:, j] = 1.0
+                    if feature_names is not None and j < len(feature_names):
+                        feature_name = feature_names[j]
+                    else:                           
+                        feature_name = f"index {j}"
+                    logger.warning(f"Feature {feature_name} has all missing data across all batches. NaNs in this feature have been replaced with 1. This feature will not be reliable for diagnostics.")
+
         report.text_simple("Missing data (NaNs) have been replaced with batch-specific structured noise (random normal with batch mean and std) for the purposes of diagnostics. \n")
 
         report.text_simple(line_break_in_text)
         report.text_simple("\n\n")
+
+        # Repeat data replacement process for covariates if needed:
+        if covariates is not None:
+            covariates_numeric = covariates
+            # if dataframe or dictionary, convert to numeric array:
+            if isinstance(covariates, pd.DataFrame):
+                covariates_numeric = covariate_to_numeric(covariates.values)
+            elif isinstance(covariates, dict):
+                covariates_numeric = covariate_to_numeric(np.column_stack(list(covariates.values())))
+            elif isinstance(covariates, np.ndarray):
+                covariates_numeric = covariate_to_numeric(covariates)
+            else:
+                raise ValueError("Covariates must be a numpy array, pandas DataFrame, or dictionary of arrays")
+            
+        #  Check for NaNs and replace with batch mean (for numeric) or mode (for categorical) as appropriate:
+        if covariates is not None:
+            n_total = covariates_numeric.shape[0]
+            cat_threshold = int(np.ceil(0.05 * n_total))  # 5% of total dataset size
+
+            for col_idx in range(covariates_numeric.shape[1]):
+                col = covariates_numeric[:, col_idx]
+                nan_mask_cov = np.isnan(col)
+                if not np.any(nan_mask_cov):
+                    report.text_simple(f"Covariate column {col_idx} has no missing data.")
+                    continue
+
+                # Determine if column is categorical:
+                # categorical if values are integers and number of unique non-NaN values <= 5% of n_total
+                col_nonan = col[~nan_mask_cov]
+                unique_vals = np.unique(col_nonan)
+                is_integer_valued = np.all(col_nonan == np.floor(col_nonan))
+                is_categorical = is_integer_valued and (len(unique_vals) <= cat_threshold)
+
+                for b in unique_batches:
+                    batch_mask_cov = (batch == b) & nan_mask_cov
+                    if not np.any(batch_mask_cov):
+                        continue
+
+                    batch_col_nonan = col[(batch == b) & ~nan_mask_cov]
+
+                    if is_categorical:
+                        # Replace with batch-specific mode
+                        if len(batch_col_nonan) > 0:
+                            vals, counts_cov = np.unique(batch_col_nonan, return_counts=True)
+                            mode_val = vals[np.argmax(counts_cov)]
+                        else:
+                            # fallback to global mode if no non-NaN values in this batch
+                            vals, counts_cov = np.unique(col_nonan, return_counts=True)
+                            mode_val = vals[np.argmax(counts_cov)]
+                        covariates_numeric[batch_mask_cov, col_idx] = mode_val
+                        report.text_simple(
+                            f"Covariate column {col_idx} (categorical): replaced {np.sum(batch_mask_cov)} "
+                            f"NaNs in batch '{b}' with mode={mode_val}"
+                        )
+                    else:
+                        # Replace with batch-specific Gaussian noise
+                        if len(batch_col_nonan) > 1:
+                            b_mean = np.nanmean(batch_col_nonan)
+                            b_std = np.nanstd(batch_col_nonan)
+                        elif len(batch_col_nonan) == 1:
+                            b_mean = batch_col_nonan[0]
+                            b_std = np.nanstd(col_nonan) if len(col_nonan) > 1 else 0.0
+                        else:
+                            # fallback to global stats
+                            b_mean = np.nanmean(col_nonan)
+                            b_std = np.nanstd(col_nonan)
+                        n_missing = np.sum(batch_mask_cov)
+                        fill_vals = np.random.normal(loc=b_mean, scale=max(b_std, 1e-8), size=n_missing)
+                        covariates_numeric[batch_mask_cov, col_idx] = fill_vals
+                        report.text_simple(
+                            f"Covariate column {col_idx} (continuous): replaced {n_missing} "
+                            f"NaNs in batch '{b}' with Gaussian noise (mean={b_mean:.4f}, std={b_std:.4f})"
+                        )
 
         # Begin tests
         logger.info("Beginning diagnostic tests")
@@ -728,17 +834,6 @@ def CrossSectionalReport(
         report.log_text("Z-score normalization visualization added to report")
         report.text_simple(line_break_in_text)
 
-        covariates_numeric = covariates
-        # if dataframe or dictionary, convert to numeric array:
-        if covariates is not None:
-            if isinstance(covariates, pd.DataFrame):
-                covariates_numeric = covariate_to_numeric(covariates.values)
-            elif isinstance(covariates, dict):
-                covariates_numeric = covariate_to_numeric(np.column_stack(list(covariates.values())))
-            elif isinstance(covariates, np.ndarray):
-                covariates_numeric = covariate_to_numeric(covariates)
-            else:
-                raise ValueError("Covariates must be a numpy array, pandas DataFrame, or dictionary of arrays")
         # ---------------------
         # Additive tests
         # ---------------------

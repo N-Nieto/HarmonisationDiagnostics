@@ -40,6 +40,10 @@ venv/
 requirements.txt
 site/
 /site/
+history/
+/history/
+.history/
+/.history/
 
 # OS generated files #
 ######################
