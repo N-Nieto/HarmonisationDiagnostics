@@ -8,6 +8,7 @@ nav:
   - Getting Started: getting_started.md
   - Theory: Theory.md
   - Simulator: simulator.md
+  - Terminal: terminal.md
   - API Reference:
       - DiagnosticReport: api/DiagnosticReport.md
       - HarmonizationFunctions: api/HarmonizationFunctions.md
