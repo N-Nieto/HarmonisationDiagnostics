@@ -1,17 +1,17 @@
-# DiagnoseHarmonize
+# DiagnoseHarmonise
 
-DiagnoseHarmonize is an **in-development** library for the streamlined application and assessment of harmonization algorithms at the summary-measure level. It also serves as a centralised location for popular, well-validated harmonization methods from the literature. Full documentation is available here **[DiagnoseHarmonization](https://jake-turnbull.github.io/HarmonizationDiagnostics/)**
+DiagnoseHarmonize is an **in-development** library for the streamlined application and assessment of harmonisation algorithms at the summary-measure level. It also serves as a centralised location for popular, well-validated harmonisation methods from the literature. Full documentation is available here **[DiagnoseHarmonisation](https://jake-turnbull.github.io/HarmonisationDiagnostics/)**
 
 In an upcoming paper, we plan to demonstrate that systematic evaluation and reporting of different components of batch effects is not only beneficial for choosing an appropriate harmonisation strategy, but essential for evaluating how well harmonisation has worked.
 
 ## Installation and Usage
 
-Install by downloading directly or by running: pip install git+https://github.com/Jake-Turnbull/HarmonizationDiagnostics.git in the terminal.
+Install by downloading directly or by running: pip install git+https://github.com/Jake-Turnbull/HarmonisationDiagnostics.git in the terminal.
 
 Load different components of the module by calling
 
 ```
-from DiagnoseHarmonization import ModuleName
+from DiagnoseHarmonisation import ModuleName
 ```
 
 ## Support and Contact
@@ -101,7 +101,7 @@ Definitions for each of the functions called by the different reporting tools in
 
 Complementary plotting functions for the functions in DiagnosticFunctions.py. Some of these functions require the output from a corresponding diagnostic function in order to run so keep this in mind this if using them outside of the reports
 
-## HarmonizationFunctions.py
+## HarmonisationFunctions.py
 
 While not the main purpose of this library, we do provide access to some well validated harmonisation methods for derived measures. These have all been tested and confirmed to be within machine precision to the other more widely used publically available versions.
 
