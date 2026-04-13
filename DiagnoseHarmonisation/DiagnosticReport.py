@@ -12,21 +12,23 @@ from DiagnoseHarmonisation import PlotDiagnosticResults
 from DiagnoseHarmonisation.LoggingTool import StatsReporter
 
 # Helper function 
-def covariate_to_numeric(covariates):
+def covariate_to_numeric(covariates) -> np.ndarray | None:
     """
-    Convert categorical covariates to numeric codes for corresponding functions that require numeric input (e.g. PCA correlation function).
-    This is a helper function that is included here for user clarity:
+    Convert categorical covariates to numeric codes for downstream analyses.
 
     Args:
         covariates (np.ndarray or pd.DataFrame): Covariate matrix with categorical variables.
-    
+
     Returns:
-        np.ndarray: Covariate matrix with categorical variables converted to numeric codes.
-    
-    Note:
-        - If covariates is a DataFrame, it will be factorized column-wise.
-        - If covariates is a numpy array, it will be factorized column-wise.
-        - The function assumes that categorical variables are of string or object type. Numeric columns will be left unchanged.
+        np.ndarray | None: Covariates converted to a numeric array, or `None` if
+        no covariates were provided.
+
+    Notes:
+        If `covariates` is a DataFrame, each categorical column is factorized
+        independently.
+        If `covariates` is a NumPy array, each categorical column is factorized
+        independently.
+        Numeric columns are left unchanged.
     """
     # Check covariate columns independently and factorize if they are categorical (string/object), otherwise keep as is. This allows for mixed covariate types.
     if covariates is None:
@@ -213,12 +215,14 @@ def CrossSectionalReportMin(data,
                              timestamped_reports: bool = True,
                              covariate_types: list | None = None,
                              ratio_type: str = "rest"
-                             ):
-    """A minimal cross-sectional diagnostic report with a limited set of tests and visualizations for quick checks.
-        This function is designed for users who want a faster, surface-level diagnostic report that includes only key tests and visualizations. 
-        
-        For a more comprehensive analysis, please use the full CrossSectionalReport function.
-    
+                             ) -> StatsReporter:
+    """
+    Create a minimal cross-sectional diagnostic report for quick checks.
+
+    This version keeps the report lightweight by running a reduced subset of
+    diagnostics and visualizations. For a more comprehensive analysis, use
+    `CrossSectionalReport`.
+
     Args:
         data (np.ndarray): Data matrix (samples x features).
         batch (list or np.ndarray): Batch labels for each sample.
@@ -234,11 +238,12 @@ def CrossSectionalReportMin(data,
         show (bool, optional): Whether to display plots interactively.
         timestamped_reports (bool, optional): Whether to append a timestamp to the report filename.
         covariate_types (list, optional): Types of covariates (e.g., 'categorical', 'numeric').
+        ratio_type (str, optional): Variance-ratio comparison mode passed to `Variance_Ratios`.
 
     Returns:
-        HTML report saved to specified directory (or cd by default). If save_data is True, also returns a dictionary of saved data arrays.
-        If SaveArtifacts is True, intermediate artifacts will be saved to the same directory with appropriate naming.
-        """
+        StatsReporter: The report object containing the generated figures, text,
+        and saved artifact references.
+    """
 
     if save_dir is None:
         save_dir = Path.cwd()
@@ -686,20 +691,16 @@ def CrossSectionalReport(
     show: bool = False,
     timestamped_reports: bool = True,
     covariate_types: list | None = None,
-    ratio_type: str = "rest"
-):
+    ratio_type: str = "rest",
+    UMAP_embedding = True, # whether to include UMAP embedding visualizations in the report
+    UMAP_tuning = 'auto' # can also be batch or none (for default umap with no tuning)
+) -> StatsReporter:
     """
-    Create a diagnostic report for dataset differences across batches;
-    Uses the following tests and visualisations in this order:
-    - Z-score visualization
-    - Cohen's D test for mean differences
-    - Mahalanobis distance between batches
-    - ICC and R^2 from LMM diagnostics
-    - Variance ratio test for variance differences between batches
-    - PCA correlation with batch and covariates (if covariates provided)
-    - PCA clustering by batch and covariates (if covariates provided)
-    - UMAP visualization colored by batch and covariates (if covariates provided)
-    - Two sample Kolmogorov-Smirnov test for distribution differences between batches
+    Create a full cross-sectional diagnostic report for batch effects.
+
+    The report combines summary text, statistical tests, and visualizations for
+    mean, variance, covariance, clustering, and distributional differences
+    across batches.
 
     Args:
         data (np.ndarray): Data matrix (samples x features).
@@ -709,19 +710,25 @@ def CrossSectionalReport(
         save_data (bool, optional): Whether to save input data and results.
         save_data_name (str, optional): Filename for saved data.
         save_dir (str or os.PathLike, optional): Directory to save report and data.
+        feature_names (list, optional): Names of features.
         report_name (str, optional): Name of the report file.
         SaveArtifacts (bool, optional): Whether to save intermediate artifacts.
         rep (StatsReporter, optional): Existing report object to use.
         show (bool, optional): Whether to display plots interactively.
-    
+        timestamped_reports (bool, optional): Whether to append a timestamp to the report filename.
+        covariate_types (list, optional): Types of covariates used by the report's numeric and categorical workflows.
+        ratio_type (str, optional): Variance-ratio comparison mode passed to `Variance_Ratios`.
+
     Returns:
-        HTML report saved to specified directory (or cd by default).
-        dict or None: If save_data is True, returns a dictionary of saved data arrays.
-    
-    Note:
-        This function takes an additional argument `covariate_types` which is a list of the same length as `covariate_names` indicating the type of each covariate (e.g., 'categorical', 'numeric'). This allows the function to handle covariates appropriately in different tests and visualizations based on their type. For example, categorical covariates can be factorized for numeric tests, while numeric covariates can be used directly. The function will log the types of covariates detected and how they are being handled in the report.
-        If this is not given, the code will use an arbitary number (10) to decide between categorical and numeric covariates. If this isn't desired, please either provide the covariate types or ensure that covariates are in a format that can be correctly inferred (e.g., categorical covariates as strings/objects, numeric covariates as numeric types).
-        Covariate types: 0 - binary, 1 - categorical, 2 - numeric. If covariate_types is provided, it should be a list of these values corresponding to each covariate in `covariate_names`. This will allow the function to handle each covariate appropriately based on its type in different tests and visualizations. For example, binary and categorical covariates can be factorized for numeric tests, while numeric covariates can be used directly. The function will log the types of covariates detected and how they are being handled in the report.
+        StatsReporter: The report object containing the generated narrative,
+        figures, and saved outputs.
+
+    Notes:
+        `covariate_types` should align with `covariate_names` so the report can
+        decide when to factorize categorical covariates and when to keep numeric
+        covariates unchanged.
+        If `covariate_types` is not provided, the function infers categorical
+        versus numeric handling from the supplied data.
 
 
 
@@ -1352,9 +1359,10 @@ def CrossSectionalReport(
         covariates=covariates,
         rep=report,
         variable_names=covariate_names,
-        UMAP_embedding=True)
-        plt.close()
+        UMAP_embedding=UMAP_embedding,
+        UMAP_tuning=UMAP_tuning)
         logger.info("Clustering visualizations added to report")
+
 
         # ---------------------
         # Distribution tests (KS)

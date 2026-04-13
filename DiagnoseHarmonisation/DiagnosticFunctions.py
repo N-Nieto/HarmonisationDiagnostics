@@ -197,13 +197,13 @@ def fit_lmm_safe(
     This is a helper function for Run_LMM_cross_sectional to fit the LMM for each feature with robust error handling and diagnostics.
 
     Returns a dictionary with:
-      - success
-      - mdf / ols
-      - optimizer_used
-      - notes
-      - warning_types / warning_messages
-      - stats
-      - status
+      success
+      mdf / ols
+      optimizer_used
+      notes
+      warning_types / warning_messages
+      stats
+      status
     """
     notes: List[str] = []
     warning_types: List[str] = []
@@ -320,6 +320,26 @@ def fit_lmm_safe(
                 import patsy
                 y_vec, X_fixed = patsy.dmatrices(formula_fixed, df_fit, return_type="dataframe")
                 ols_fixed = sm.OLS(y_vec, X_fixed).fit()
+                # Return the betas for the fixed effects from the OLS model, do this using covariate names to ensure correct mapping even if patsy changes order or adds intercept
+                ols_betas = {name: ols_fixed.params[name] for name in X_fixed.columns}
+                ols_fixed_betas = {name: ols_fixed.params[name] for name in X_fixed.columns}
+                # add batch coefficients
+                y_b, X_b = patsy.dmatrices(f"y ~ C({group_col})", df_fit, return_type="dataframe")
+                # extract reference batch (the one not present in dummy columns)
+                all_batches = set(df_fit[group_col].dropna().unique())
+                dummy_batches = {
+                    name.split("[T.")[1].rstrip("]")
+                    for name in X_b.columns
+                    if name.startswith(f"C({group_col})[T.")
+                }
+                reference_batch = list(all_batches - dummy_batches)[0] if len(all_batches - dummy_batches) == 1 else None
+
+                ols_batch = sm.OLS(y_b, X_b).fit()
+                ols_batch_betas = {
+                    name: ols_batch.params[name]
+                    for name in X_b.columns
+                    if name != "Intercept"
+                }
 
                 llf_lmm = float(mdf.llf)
                 llf_ols = float(ols_fixed.llf)
@@ -344,6 +364,9 @@ def fit_lmm_safe(
                 "LR_stat": LR_stat,
                 "pval_LRT_random": pval_LRT,
                 "pval_LRT_random_mixture": pval_LRT_mixture,
+                "ols_fixed_betas": ols_betas if 'ols_betas' in locals() else None,
+                "ols_batch_betas": ols_batch_betas if 'ols_batch_betas' in locals() else None,
+                "reference_batch": reference_batch if 'reference_batch' in locals() else None,
             }
 
             return {
@@ -402,33 +425,42 @@ def Run_LMM_cross_sectional(
     optimizers=("lbfgs", "bfgs", "powell", "cg"),
     maxiter=400,
     boundary_pvalue=True,
-):
+) -> tuple[pd.DataFrame, dict[str, Any]]:
     """
-    Run a random-intercept Linear Mixed Model for each feature in Data with batch as the grouping variable and optional covariates as fixed effects.
-    Parameters:
-        - Data: array-like of shape (n_samples, n_features) - the data matrix to analyze.
-        - batch: array-like of shape (n_samples,) - batch labels for each sample.
-        - covariates: optional array-like of shape (n_samples, n_covariates) or DataFrame - covariate data to include as fixed effects.
-        - feature_names: optional list of length n_features - names for each feature.
-        - group_col_name: str - name for the batch grouping column in the DataFrame.
-        - covariate_names: optional list of length n_covariates - names for each covariate.
-        - min_group_n: int - minimum number of samples per batch group to attempt LMM fitting.
-        - var_threshold: float - variance threshold below which a feature is considered low-variance and skipped.
-        - reml: bool - whether to use REML for LMM fitting.
-        - optimizers: iterable of str - sequence of optimizers to try for LMM fitting.
-        - maxiter: int - maximum iterations for each optimizer.
-        - boundary_pvalue: bool - whether to calculate mixture p-value for variance-on-boundary testing in LRT.
-    
-    Returns:
-        - results_df: DataFrame with one row per feature containing LMM fitting results and diagnostics.
-        - summary: dict summarising counts of various notes and warnings across features.
-    
-    Notes:
-        - If a feature has variance below var_threshold, it is skipped and noted as "low_variance_feature".
-        - If any batch group has fewer than min_group_n samples, LMM fitting is skipped and an OLS fallback is attempted, with notes "small_group_count" and "fallback_ols_used" or "fallback_ols_failed".
-        - If LMM fitting fails to converge or raises an exception for all optimizers, an OLS fallback is attempted with note "all_lmm_optimizers_failed_fallback_ols".
-        - Various warnings during fitting are captured and recorded in the results.
+    Run a random-intercept linear mixed model for each feature.
 
+    Batch is treated as the grouping variable, and any supplied covariates are
+    included as fixed effects.
+
+    Args:
+        Data: Array-like data matrix with shape `(n_samples, n_features)`.
+        batch: Array-like batch labels with length `n_samples`.
+        covariates: Optional covariate matrix or DataFrame with one row per
+            sample.
+        feature_names: Optional names for the feature columns.
+        group_col_name: Column name used for the grouping variable in the
+            temporary modeling DataFrame.
+        covariate_names: Optional names for covariate columns.
+        min_group_n: Minimum batch size required before attempting mixed-model
+            fitting.
+        var_threshold: Variance threshold below which a feature is skipped.
+        reml: Whether to fit the mixed model with REML instead of ML.
+        optimizers: Optimizers to try in sequence for model fitting.
+        maxiter: Maximum iterations per optimizer.
+        boundary_pvalue: Whether to compute the mixture p-value for variance
+            components on the boundary.
+
+    Returns:
+        tuple[pd.DataFrame, dict[str, Any]]: A tuple containing the per-feature
+        results DataFrame and a summary dictionary of notes and warnings across
+        features.
+
+    Notes:
+        Features below `var_threshold` are skipped.
+        Small batch groups trigger an OLS fallback instead of mixed-model
+        fitting.
+        Warnings raised during fitting are captured and included in the
+        returned results.
     """
     Data = np.asarray(Data, dtype=float)
     if Data.ndim != 2:
@@ -490,6 +522,16 @@ def Run_LMM_cross_sectional(
             "notes": ";".join(notes),
             "warning_types": ";".join(res.get("warning_types", []) or []),
         }
+        # Loop over OLS fixed betas and add them to the row with a prefix, ensuring we handle missing values gracefully
+        ols_fixed_betas = stats.get("ols_fixed_betas", {}) or {}
+        for cov_name, beta in ols_fixed_betas.items():
+            row[f"ols_fixed_beta_{cov_name}"] = beta if np.isfinite(beta) else np.nan
+        # Repeat the same for batch betas, ensuring we handle missing values gracefully
+        ols_batch_betas = stats.get("ols_batch_betas", {}) or {}
+        for batch_name, beta in ols_batch_betas.items():
+            row[f"ols_batch_beta_{batch_name}"] = beta if np.isfinite(beta) else np.nan
+        row["reference_batch"] = stats.get("reference_batch", None)
+    
         rows.append(row)
 
         for ntag in notes:
@@ -743,30 +785,20 @@ def z_score(data,MAD=False):
 
 import numpy as np
 
-def robust_z_score(data, method="mad", eps=1e-12):
+def robust_z_score(data, method="mad", eps=1e-12) -> np.ndarray:
     """
-    Robust normalization of a data matrix (samples x features).
+    Apply robust z-scoring to a data matrix.
 
-    Parameters
-    ----------
-    data : array-like
-        Input data, shape (n_samples, n_features) or (n_samples,)
-    method : {"mad", "iqr", "std"}
-        Scaling method.
-        - "mad": median absolute deviation, scaled to be comparable to std
-        - "iqr": interquartile range, scaled to be comparable to std
-        - "std": standard z-score, but still median-centered here
-    eps : float
-        Small value to avoid division by zero.
+    Args:
+        data: Input data with shape `(n_samples, n_features)` or
+            `(n_samples,)`.
+        method: Scaling method. Use `"mad"` for median absolute deviation,
+            `"iqr"` for interquartile range, or `"std"` for a standard
+            deviation scale around the median.
+        eps: Small value used to avoid division by zero.
 
-    Returns
-    -------
-    zscored : ndarray
-        Normalized data.
-    center : ndarray
-        Per-feature center used.
-    scale : ndarray
-        Per-feature scale used.
+    Returns:
+        np.ndarray: The normalized data array.
     """
     data = np.asarray(data)
 
@@ -791,25 +823,39 @@ def robust_z_score(data, method="mad", eps=1e-12):
 
 import numpy as np
 
-def Cohens_D(Data, batch_indices, covariates=None, BatchNames=None, covariate_names=None, covariate_types=None):
+def Cohens_D(
+    Data,
+    batch_indices,
+    covariates=None,
+    BatchNames=None,
+    covariate_names=None,
+    covariate_types=None,
+) -> tuple[np.ndarray, list[tuple[str, str]]]:
     """
-    Cohen's d for each batch vs "all other batches" using UNWEIGHTED batch averages.
-    In some instances, one may want to see batch vs batch specific comparisons, but this function focuses on batch vs rest to give a more global picture of how each batch differs from the overall distribution of the data (after covariate effects are removed if covariates are provided).
+    Compute Cohen's d for each batch against the pooled remainder.
+
+    This function reports batch-versus-rest effect sizes to give a global view
+    of how each batch differs from the overall distribution after optional
+    covariate residualization.
 
     Args:
-        Data: np.ndarray of shape (n_samples, n_features) - the data matrix.
-        batch_indices: array-like of shape (n_samples,) - batch labels for each sample (can be strings or numbers).
-        covariates: optional np.ndarray of shape (n_samples, n_covariates) - covariate matrix to residualise out before calculating Cohen's d.
-        BatchNames: optional dict mapping batch label to display name, or list/tuple of names in order of unique batches, or None to use batch labels as names.
-        covariate_names: optional list of length n_covariates with names for each covariate (used for internal processing and reporting).
-        covariate_types: optional list of length n_covariates with values 0 (binary), 2 (categorical), 3 (continuous) indicating the type of each covariate (used for internal processing and reporting). If not provided, types will be inferred from the data.
-    
+        Data: Data matrix with shape `(n_samples, n_features)`.
+        batch_indices: Batch labels for each sample.
+        covariates: Optional covariate matrix to residualize before effect-size
+            calculation.
+        BatchNames: Optional display names for batches.
+        covariate_names: Optional names for covariate columns.
+        covariate_types: Optional covariate type codes used by the residualizing
+            workflow.
+
     Returns:
-        pairwise_d: np.ndarray of shape (n_batches, n_features) with Cohen's d values for each batch vs rest comparison.
-        pair_labels: list of tuples with labels for each comparison (e.g., [('Batch1', 'all_data'), ('Batch2', 'all_data'), ...]).
-    
-    Note:
-        - Cohen's d is calculated as (mean_batch - mean_other) / std_other, where mean_other and std_other are the UNWEIGHTED averages of the means and stds of the other batches (i.e., simple arithmetic mean across batches, NaNs replace by batch specific noise).
+        tuple[np.ndarray, list[tuple[str, str]]]: Cohen's d values with shape
+        `(n_batches, n_features)` and the corresponding batch-vs-rest labels.
+
+    Notes:
+        Cohen's d is computed as `(mean_batch - mean_other) / std_other`, where
+        `mean_other` and `std_other` are the unweighted averages across the
+        other batches.
     """
     if not isinstance(Data, np.ndarray) or Data.ndim != 2:
         raise ValueError("Data must be a 2D numpy array (samples x features).")
@@ -1010,7 +1056,7 @@ def PC_Correlations(
     return explained_variance, scores, PC_correlations, pca
 
 # MahalanobisDistance computes the Mahalanobis distance (multivariate difference between batch and global centroids)
-def Mahalanobis_Distance(Data=None, batch=None, covariates=None):
+def Mahalanobis_Distance(Data=None, batch=None, covariates=None) -> dict[str, Any]:
 
     """
     Calculate the Mahalanobis distance between batches in the data.
@@ -1025,16 +1071,10 @@ def Mahalanobis_Distance(Data=None, batch=None, covariates=None):
         covariates (np.ndarray, optional): Covariate matrix (n x k). An intercept will be added automatically.
 
     Returns:
-        dict: {
-            "pairwise_raw": { (b1, b2): distance, ... },
-            "pairwise_resid": { (b1, b2): distance, ... } or None if no covariates,
-            "centroid_raw": { (b, 'global'): distance, ... },
-            "centroid_resid": { (b, 'global'): distance, ... } or None if no covariates,
-            "batches": list_of_unique_batches_in_order
-        }
-    Keys of the inner dicts are tuples like (b1, b2) for pairwise distances and (b, 'global') for
-    distances to the overall centroid.
-
+        dict[str, Any]: A dictionary containing pairwise and centroid
+        Mahalanobis distances before and, when covariates are provided, after
+        residualization. Inner dictionary keys use tuples such as `(b1, b2)` or
+        `(b, "global")`.
     """
     # ---- validations ----
     if Data is None or batch is None:
@@ -1124,28 +1164,32 @@ def Mahalanobis_Distance(Data=None, batch=None, covariates=None):
 
 def Variance_Ratios(data, batch, covariates=None,
                     covariate_names=None, covariate_types=None,
-                    mode='rest'):
+                    mode='rest') -> dict[Any, np.ndarray]:
     """
-    Calculate feature-wise ratio(s) of variance for batches. Can calculate in multiple modes depending on the desired comparisons:
+    Calculate feature-wise variance ratios for batches.
 
-    Modes:
-      - 'pairwise'       : (default) compute variance ratio for each unique pair (b1, b2) -> var(b1)/var(b2)
-      - 'rest'           : for each batch b compute var(b) / var(all_samples_except_b)  (pooled rest)
-      - 'unweighted_mean': for each batch b compute var(b) / mean(var(other_batches))
-      - 'weighted_mean'  : for each batch b compute var(b) / weighted_mean(var(other_batches),
-                                                           weights = sample sizes of other batches)
+    Multiple comparison modes are available depending on the desired reference
+    set.
 
     Args:
-        data: numpy array (n_samples, n_features)
-        batch: 1D array-like of length n_samples (batch labels)
-        covariates: optional, passed to RobustOLS for adjustment (same as your current workflow)
-        covariate_names, covariate_types: passed to RobustOLS
-        mode: one of {'pairwise', 'rest', 'unweighted_mean', 'weighted_mean'}
+        data: NumPy array with shape `(n_samples, n_features)`.
+        batch: Batch labels with length `n_samples`.
+        covariates: Optional covariates passed to `RobustOLS` before computing
+            the ratios.
+        covariate_names: Optional covariate names passed to `RobustOLS`.
+        covariate_types: Optional covariate type codes passed to `RobustOLS`.
+        mode: One of `{"pairwise", "rest", "unweighted_mean",
+            "weighted_mean"}`.
 
     Returns:
-        dict:
-          - if mode == 'pairwise': keys are tuples (b1, b2) (same as your original function)
-          - else: keys are batch labels and values are arrays (n_features,) of var(batch)/var(reference)
+        dict[Any, np.ndarray]: A dictionary of variance-ratio arrays keyed by
+        batch label or batch-pair tuple, depending on `mode`.
+
+    Notes:
+        `pairwise` compares every unique batch pair.
+        `rest` compares each batch against all remaining samples.
+        `unweighted_mean` and `weighted_mean` compare each batch against the
+        mean variance of the other batches.
     """
 
     import numpy as np
@@ -1316,35 +1360,35 @@ def KS_Test(data,
                 do_fdr=True,
                 residualize_covariates=True,
                 covariate_names=None,
-                covariate_types=None):
+                covariate_types=None) -> dict[tuple[Any, Any], dict[str, Any]]:
     """
-    Perform two-sample Kolmogorov-Smirnov test for distribution differences between each unique batch pair and optionally compare each batch to the overall distribution (either including or excluding that batch).
+    Perform two-sample Kolmogorov-Smirnov tests across batches.
+
+    The function can compare each batch against the pooled data, the pooled data
+    excluding that batch, and optionally all unique batch pairs.
 
     Args:
-      data: (n_samples, n_features) numpy array
-      batch: array-like of length n_samples with batch labels
-      feature_names: optional list of feature names
-      compare_pairs: if True, include pairwise batch-vs-batch KS tests
-      compare_to_overall_excluding_batch: if True, compare batch to overall excluding that batch
-                                        (recommended). If False, compares to pooled overall (original behavior).
-      min_batch_n: minimum samples required in each group to run KS for that feature (default 3)
-      alpha: significance threshold for summary reporting
-      do_fdr: whether to compute Benjamini-Hochberg FDR-corrected p-values per comparison
-      residualize_covariates: if True, residualize covariates before testing (default True)
-      covariate_names: optional list of covariate names (used for internal processing and reporting)
-      covariate_types: optional list of covariate types (0=binary, 2=categorical, 3=continuous) (used for internal processing and reporting)
-    
+        data: NumPy array with shape `(n_samples, n_features)`.
+        batch: Batch labels with length `n_samples`.
+        feature_names: Optional feature names.
+        covariates: Optional covariate matrix for residualization.
+        compare_pairs: Whether to include pairwise batch-versus-batch tests.
+        compare_to_overall_excluding_batch: Whether to compare each batch
+            against the pooled data excluding that batch.
+        min_batch_n: Minimum samples required per group for a feature-level test.
+        alpha: Significance threshold used in summaries.
+        do_fdr: Whether to compute Benjamini-Hochberg adjusted p-values.
+        residualize_covariates: Whether to residualize covariates before
+            testing.
+        covariate_names: Optional names for covariate columns.
+        covariate_types: Optional covariate type codes used during
+            residualization.
+
     Returns:
-      dict:
-        - keys are tuples like (b, 'overall') or (b1, b2)
-        - each value is a dict with:
-            'statistic': np.array of D statistics (length n_features)
-            'p_value': np.array of p-values (nan where test not run)
-            'p_value_fdr': np.array of BH-corrected p-values (if do_fdr else None)
-            'n_group1': array of sample counts per feature for group1 (same across features but kept for completeness)
-            'n_group2': array of counts for group2
-            'summary': {'prop_significant': float, 'mean_D': float}
-        - 'feature_names': list of feature names
+        dict[tuple[Any, Any], dict[str, Any]]: A dictionary keyed by comparison
+        labels such as `(batch, "overall")` or `(batch1, batch2)`. Each value
+        contains the per-feature KS statistics, p-values, optional FDR-adjusted
+        p-values, sample counts, and summary metrics.
     """
     import numpy as np
     from scipy.stats import ks_2samp

@@ -61,3 +61,6 @@ tests/__pycache__/
 .Trashes
 ehthumbs.db
 Thumbs.db
+tests/__pycache__/__init__.cpython-313.pyc
+tests/__pycache__/test_DiagnosticReport.cpython-313-pytest-9.0.1.pyc
+.DS_Store

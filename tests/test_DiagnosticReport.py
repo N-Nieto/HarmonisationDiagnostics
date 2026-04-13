@@ -165,7 +165,8 @@ def test_full_pipeline_generates_report(tmp_path, monkeypatch):
                                 SaveArtifacts=False, # Whether to save artifacts, default False
                                     rep=None, # Optional: report object
                                         show=False, # Whether to display the report, default False
-                                        timestamped_reports=False # Whether to use timestamped report names
+                                        timestamped_reports=False, # Whether to use timestamped report names
+                                        UMAP_tuning='batch'
                                             
         )
         # Run harmoisation and generate report
@@ -348,7 +349,8 @@ def test_full_pipeline_generates_report(tmp_path = save_dir):
                                 SaveArtifacts=False, # Whether to save artifacts, default False
                                     rep=None, # Optional: report object
                                         show=False, # Whether to display the report, default False
-                                        timestamped_reports=timestamped_reports # Whether to use timestamped report names
+                                        timestamped_reports=timestamped_reports, # Whether to use timestamped report names
+                                        UMAP_tuning='batch' # Whether to tune UMAP parameters based on batch
                                             
         )
 

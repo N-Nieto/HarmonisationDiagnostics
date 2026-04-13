@@ -234,30 +234,20 @@ def WithinSubjVar_long(
       to the mean, ``SD / mean * 100``.
     - If mean is 0 or no valid data: returns NaN.
 
-    Parameters
-    ----------
-    idp_matrix : array-like, shape (n_samples, n_idps)
-        Numeric matrix of IDP values.
-    subjects : sequence of length n_samples
-        Subject identifiers used to group repeated measurements.
-    timepoints : sequence of length n_samples
-        Timepoint labels (not directly used in calculation but required for
-        input alignment).
-    idp_names : sequence of length n_idps, optional
-        Names of IDPs; defaults to ["idp_1", ...].
+    Args:
+        idp_matrix: Numeric matrix of IDP values with shape
+            `(n_samples, n_idps)`.
+        subjects: Subject identifiers used to group repeated measurements.
+        timepoints: Timepoint labels required for input alignment.
+        idp_names: Optional names of IDPs. Defaults to `["idp_1", ...]`.
 
-    Returns
-    -------
-    pd.DataFrame
-        One row per subject with columns ``["subject", <IDP1>, <IDP2>, ...]``,
-        where each IDP value represents within-subject percent variability.
+    Returns:
+        pd.DataFrame: One row per subject with columns `["subject", <IDP1>,
+        <IDP2>, ...]`, where each IDP value represents within-subject percent
+        variability.
 
-    Raises
-    ------
-    ValueError
-        If ``idp_matrix`` is not 2-D, or if input sequence lengths do not
-        match the number of rows, or if ``idp_names`` length does not match
-        the number of columns.
+    Raises:
+        ValueError: If `idp_matrix` is not 2-D, if input sequence lengths do not match the number of rows, or if `idp_names` length does not match the number of columns.
     """
 
 
@@ -331,54 +321,36 @@ def MultiVariateBatchDifference_long(
       falls back to an SVD-based pseudoinverse (with tolerance-based truncation)
       for numeric stability.
 
-    Parameters
-    ----------
-    idp_matrix : array-like, shape (n_samples, n_features)
-        Numeric matrix of features / IDPs (rows are observations).
-    batch : pandas.Series or sequence of length n_samples
-        Batch / site labels for each row. Will be converted to a categorical
-        Series; categories (in order) determine output site order.
-    idp_names : sequence of length n_features, optional
-        Feature names used for intermediate DataFrame columns. Defaults to
-        ["idp_1", "idp_2", ...].
-    return_info : bool, default False
-        If True, also return a diagnostics dict with keys:
+    Args:
+        idp_matrix: Numeric matrix of features or IDPs with shape
+            `(n_samples, n_features)`.
+        batch: Batch or site labels for each row.
+        idp_names: Optional feature names used for intermediate DataFrame
+            columns.
+        return_info: Whether to also return a diagnostics dictionary containing
+            site categories, retained counts, covariance conditioning metadata,
+            and the averaged covariance matrix.
 
-        - ``"site_categories"``: list of category labels.
-        - ``"site_counts"``: list of retained (post-NaN-drop) sample counts per site.
-        - ``"cond_number"``: condition number of the averaged covariance.
-        - ``"num_retained_svals"``: number of singular values retained (SVD fallback).
-        - ``"overallCov"``: the averaged covariance matrix (numpy array).
+    Returns:
+        pd.DataFrame | tuple[pd.DataFrame, dict[str, Any]]: A DataFrame with
+        columns `["batch", "mdval"]`, optionally returned alongside a diagnostics
+        dictionary when `return_info` is `True`.
 
-    Returns
-    -------
-    pd.DataFrame or tuple of (pd.DataFrame, dict)
-        DataFrame with columns ``["batch", "mdval"]``. Rows are ordered by batch
-        categories followed by a final row ``"average_batch"`` containing the mean
-        MD across sites. If ``return_info`` is True, a tuple
-        ``(DataFrame, info_dict)`` is returned.
+    Raises:
+        ValueError: If `idp_matrix` is not 2-D, if `batch` length does not match the number of rows, or if `idp_names` length does not match the number of features.
 
-    Raises
-    ------
-    ValueError
-        If ``idp_matrix`` is not 2-D, or if ``batch`` length does not match the
-        number of rows, or if ``idp_names`` length does not match the number of
-        features.
-
-    Notes
-    -----
-    - Rows with any NaN across features are dropped when computing a site's mean
+    Notes:
+        Rows with any NaN across features are dropped when computing a site's mean
       and covariance. If a site has zero retained rows, a warning is emitted and
       its mean is left as NaN (MD will be NaN). If a site has one retained row,
       its covariance is taken to be the zero matrix.
-    - The averaged covariance is the simple mean of per-site covariances.
-    - Mahalanobis distances are computed as
+        The averaged covariance is the simple mean of per-site covariances.
+        Mahalanobis distances are computed as
       ``sqrt((mu_i - mu_overall)' Σ^{-1} (mu_i - mu_overall))``.
       For numerical stability, the function attempts a direct linear solve when
       the averaged covariance is well-conditioned; otherwise it uses an SVD-based
       pseudoinverse with a tolerance derived from machine epsilon.
-    - Returns NaN for MD if a site's mean vector is NaN (e.g., site had no
-      retained observations after NaN-dropping).
+        The function returns NaN for MD if a site's mean vector is NaN.
     """
 
     # --- validate / coerce matrix ---
@@ -569,13 +541,23 @@ def build_mixed_formula(
     zscore_response: bool = True,
 ) -> Tuple[pd.DataFrame, List[str]]:
     """
-    Build three formulas:
-      formulas[0] : full model (fixed terms + batch_vars + random terms)
-      formulas[1] : subject-only/random-only (lhs ~ 1 + (1|<first_random_var>)) if random terms present,
-                    otherwise lhs ~ 1
-      formulas[2] : fixed-effects-only (without batch terms) optionally + random terms
+    Build the longitudinal mixed-model formulas used by the pipeline.
 
-    Returns: modified df (with forced types / zscores) and list of formulas.
+    Args:
+        tbl_in: Input DataFrame containing the response and predictor columns.
+        response_var: Response variable to model.
+        fix_eff: Fixed-effect terms to include.
+        ran_eff: Random-effect grouping terms to include.
+        batch_vars: Batch-related terms to include in the full model only.
+        force_categorical: Columns to coerce to categorical dtype.
+        force_numeric: Columns to coerce to numeric dtype.
+        zscore_vars: Columns to z-score before formula construction.
+        zscore_response: Whether to z-score the response column.
+
+    Returns:
+        tuple[pd.DataFrame, list[str]]: The transformed DataFrame and a list of
+        formulas ordered as full model, subject-only or null model, and
+        fixed-effects-only model.
     """
     df = tbl_in.copy()
     fix_eff = list(fix_eff)
@@ -795,89 +777,44 @@ def MixedEffects_long(
     6. Collects diagnostics and returns one summary row per IDP. Model failures
        yield NaNs for that IDP but do not stop the pipeline.
 
-    Parameters
-    ----------
-    idp_matrix : array-like, shape (n_samples, n_idps)
-        Numeric matrix of IDP values (rows = observations).
-    subjects : sequence of length n_samples
-        Subject identifiers (canonical column name used internally: ``'subjects'``).
-    timepoints : sequence of length n_samples
-        Timepoint labels (canonical name: ``'timepoints'``).
-    batches : sequence of length n_samples
-        Batch / site labels (canonical name: ``'batches'``); converted to
-        categorical.
-    idp_names : sequence of length n_idps
-        Names for IDP columns.
-    covariates : dict, optional
-        Mapping of ``name -> sequence`` for additional covariates; each
-        sequence length must match ``n_samples``.
-    fix_eff : sequence, optional
-        Fixed-effect variable names to include. If empty, defaults to the keys
-        of ``covariates`` (batch/timepoint are still included by the formula
-        builder as ``batch_vars``).
-    ran_eff : sequence, optional
-        Random-effect grouping variables. If empty, defaults to
-        ``['subjects']``.
-    force_categorical : sequence, optional
-        Columns to coerce to categorical dtype.
-    force_numeric : sequence, optional
-        Columns to coerce to numeric dtype.
-    zscore_var : sequence, optional
-        Variables to z-score before model fitting.
-    do_zscore : bool, default True
-        Use ``zscore_...`` columns for response/predictors when available.
-    p_thr : float, default 0.05
-        Nominal alpha for pairwise Wald tests.
-    p_corr : int, default 1
-        If ``0``, disable multiple-comparison correction for pairwise tests;
-        otherwise apply Bonferroni-style correction at
-        ``alpha = 0.05 / n_tests_nonNaN``.
-    reml : bool, default True
-        Whether to fit MixedLM using REML.
+    Args:
+        idp_matrix: Numeric matrix of IDP values with shape
+            `(n_samples, n_idps)`.
+        subjects: Subject identifiers.
+        timepoints: Timepoint labels.
+        batches: Batch or site labels, converted internally to categorical.
+        idp_names: Names for IDP columns.
+        covariates: Optional mapping of `name -> sequence` for additional
+            covariates.
+        fix_eff: Fixed-effect variable names to include.
+        ran_eff: Random-effect grouping variables.
+        force_categorical: Columns to coerce to categorical dtype.
+        force_numeric: Columns to coerce to numeric dtype.
+        zscore_var: Variables to z-score before model fitting.
+        do_zscore: Whether to use `zscore_...` columns when available.
+        p_thr: Nominal alpha for pairwise Wald tests.
+        p_corr: Multiple-comparison correction mode for pairwise tests.
+        reml: Whether to fit `MixedLM` using REML.
 
-    Returns
-    -------
-    tuple of (pd.DataFrame, list)
-        A tuple ``(results_df, model_defs)`` where:
+    Returns:
+        tuple[pd.DataFrame, list]: A tuple `(results_df, model_defs)` where
+        `results_df` contains one row per IDP with mixed-model diagnostics and
+        fixed-effect summaries, and `model_defs` stores the formulas used for
+        each feature.
 
-        - ``results_df`` contains one row per IDP with columns (stable order):
-          ``["IDP", "batch", "n_is_batchSig", "anova_batches", "Subj_Var",
-          "Resid_Var", "ICC", "WCV", <fixed-effect estimate/pval/ci columns>]``.
+    Raises:
+        ValueError: If `idp_matrix` is not 2-D or if input sequence lengths do not match the number of rows.
+        KeyError: If requested variables in `fix_eff`, `ran_eff`, or `force_*` are not present in the assembled DataFrame.
 
-          - ``n_is_batchSig``: count of pairwise contrasts judged significant
-            (after correction when ``p_corr != 0``).
-          - ``anova_batches``: number of batch-related fixed-effect terms with
-            p < 0.05 as reported by the full model's p-values.
-          - ``Subj_Var``, ``Resid_Var``: variance components from the
-            subject-only model (may be NaN on fit failure).
-          - ``ICC``: intra-class correlation
-            ``(Subj_Var / (Subj_Var + Resid_Var))``.
-          - ``WCV``: within/between variance ratio ``(Resid_Var / Subj_Var)``.
-          - For every variable in ``fix_eff``, the DataFrame will include
-            ``<var>_est``, ``<var>_pval``, ``<var>_ciL``, ``<var>_ciU``.
-
-        - ``model_defs`` is a list of dicts (one per IDP) capturing the three
-          model formulas used for that feature.
-
-    Raises
-    ------
-    ValueError
-        If ``idp_matrix`` is not 2-D or if input sequence lengths mismatch the
-        number of rows.
-    KeyError
-        If requested variables in ``fix_eff``, ``ran_eff``, or ``force_*``
-        lists are not present in the assembled DataFrame.
-
-    Notes
-    -----
-    - Column names exposed to users (for ``fix_eff`` / ``ran_eff`` /
+    Notes:
+        Column names exposed to users (for ``fix_eff`` / ``ran_eff`` /
       ``force_*``) are exactly: ``'subjects'``, ``'timepoints'``,
       ``'batches'`` — these names are inserted into the working DataFrame so
       callers should use them when referring to these variables.
-    - The function reorders batch categories so the largest group becomes the
+        The function reorders batch categories so the largest group becomes the
       reference level before fitting (helps stable parameterization of
       contrasts).
-    - The primary grouping column for mixed models is the first valid entry of
+        The primary grouping column for mixed models is the first valid entry of
       ``ran_eff`` (or ``'subjects'`` when ``ran_eff`` was not specified).
     - If model fitting fails for an IDP, the pipeline records NaNs for that
       IDP and continues (failures do not stop the whole run).
@@ -1367,82 +1304,50 @@ def AdditiveEffect_long(
     - Records test statistic, degrees of freedom, p-value and which method was
       used: ``"LRT"``, ``"Wald"``, or ``"Wald_pinv"``.
 
-    Parameters
-    ----------
-    data : pd.DataFrame, optional
-        If provided, used directly; otherwise ``idp_matrix`` + ``subjects`` +
-        ``batch_name`` (and optional ``timepoints``) are used to construct the
-        DataFrame.
-    idp_matrix : ndarray, optional
-        Shape ``(n_samples, n_features)``. Required when ``data`` is None.
-    subjects : sequence, optional
-        Subject/grouping IDs (required when ``data`` is None).
-    timepoints : sequence, optional
-        Timepoint labels (used only when building the DataFrame from arrays).
-    batch_name : sequence, optional
-        Batch labels (required when ``data`` is None).
-    idp_names : iterable of str, optional
-        Feature names when building from ``idp_matrix``.
-    covariates : dict, optional
-        Mapping of ``name -> sequence`` for additional covariates.
-    idvar : str, optional
-        Column name for subject IDs; defaults to ``'subject_ids'``.
-    batchvar : str, optional
-        Column name for batch labels; defaults to ``'batch'``.
-    timevar : str, optional
-        Column name for timepoints; defaults to ``'timepoints'``.
-    fix_eff : iterable, optional
-        Fixed-effect predictors; defaults to ``covariates.keys()`` when not
-        supplied.
-    ran_eff : iterable, optional
-        Random-effect grouping variables; defaults to ``[idvar]``.
-    do_zscore : bool, default True
-        Z-score the response per-feature when True.
-    reml : bool, default False
-        Whether to fit MixedLM using REML.
-    verbose : bool, default True
-        Print progress / model formulas.
+    Args:
+        data: Optional DataFrame used directly when provided.
+        idp_matrix: Optional feature matrix used when `data` is not supplied.
+        subjects: Optional subject IDs used when building a DataFrame from
+            arrays.
+        timepoints: Optional timepoint labels used when building a DataFrame
+            from arrays.
+        batch_name: Optional batch labels used when building a DataFrame from
+            arrays.
+        idp_names: Optional feature names for `idp_matrix`.
+        covariates: Optional mapping of `name -> sequence` for additional
+            covariates.
+        idvar: Column name for subject IDs.
+        batchvar: Column name for batch labels.
+        timevar: Column name for timepoints.
+        fix_eff: Fixed-effect predictors.
+        ran_eff: Random-effect grouping variables.
+        do_zscore: Whether to z-score the response per feature.
+        reml: Whether to fit `MixedLM` using REML.
+        verbose: Whether to print progress and model formulas.
 
-    Returns
-    -------
-    tuple of (pd.DataFrame, list)
-        A tuple ``(results_df, model_defs)`` where ``results_df`` contains one
-        row per feature with columns:
+    Returns:
+        pd.DataFrame: One row per feature with additive batch-effect test
+        statistics, degrees of freedom, p-values, and method labels.
 
-        - ``"Feature"``: feature name.
-        - ``"TestStat"``: LR (or Wald) statistic.
-        - ``"df"``: degrees of freedom used for the test.
-        - ``"p-value"``: p-value for the test.
-        - ``"method"``: ``"LRT"``, ``"Wald"``, ``"Wald_pinv"``, or ``None``
-          if the test was not performed.
+    Raises:
+        KeyError: If `ran_eff` variables are not found in the assembled DataFrame.
+        ValueError: If `idp_matrix` is not 2-D or if input sequence lengths do not match the number of rows.
 
-        ``model_defs`` is a list of dicts capturing per-feature formulas and
-        settings.
-
-    Raises
-    ------
-    KeyError
-        If ``ran_eff`` variables are not found in the assembled DataFrame.
-    ValueError
-        If ``idp_matrix`` is not 2-D, or if input sequence lengths do not
-        match the number of rows.
-
-    Notes
-    -----
-    - Per-feature predictor z-scoring is always applied to numeric ``fix_eff``
+    Notes:
+        Per-feature predictor z-scoring is always applied to numeric `fix_eff`
       (local to each feature) via ``_build_fixed_formula_terms``.
-    - ``do_zscore=True`` (default): z-scores the response per feature and uses
+        ``do_zscore=True`` (default): z-scores the response per feature and uses
       the z-scored response (``z_<feature>``) as LHS. Set ``do_zscore=False``
       to keep original units.
-    - ``reml=False`` (default): mixed models are fitted with REML disabled.
+        ``reml=False`` (default): mixed models are fitted with REML disabled.
       Pass ``reml=True`` to use REML.
-    - Rows with NaN responses are dropped per-feature. Features with fewer than
+        Rows with NaN responses are dropped per-feature. Features with fewer than
       3 retained rows are skipped and returned with NaNs.
-    - If the full or reduced mixed fit fails, that feature is reported with NaNs.
-    - The Wald fallback constructs contrasts for batch-related parameters found
+        If the full or reduced mixed fit fails, that feature is reported with NaNs.
+        The Wald fallback constructs contrasts for batch-related parameters found
       in the fitted parameter names and uses the parameter covariance matrix to
       compute a chi-square statistic; pseudoinverse is used if needed.
-    - Because predictors are z-scored per-feature, coefficient magnitudes are
+        Because predictors are z-scored per-feature, coefficient magnitudes are
       comparable across features only in the z-scored scale (unless
       ``do_zscore=False``).
     """
@@ -1670,79 +1575,46 @@ def MultiplicativeEffect_long(
     - Records test statistic, DF (n_groups - 1), p-value and method
       ``"Fligner"``.
 
-    Parameters
-    ----------
-    data : pd.DataFrame, optional
-        If provided, used directly; otherwise ``idp_matrix`` + ``subjects`` +
-        ``batch_name`` (and optional ``timepoints``) are used to construct the
-        DataFrame.
-    idp_matrix : ndarray, optional
-        Shape ``(n_samples, n_features)``. Required when ``data`` is None.
-    subjects : sequence, optional
-        Subject/grouping IDs (required when ``data`` is None).
-    timepoints : sequence, optional
-        Timepoint labels (used only when building the DataFrame from arrays).
-    batch_name : sequence, optional
-        Batch labels (required when ``data`` is None).
-    idp_names : iterable of str, optional
-        Feature names when building from ``idp_matrix``.
-    covariates : dict, optional
-        Mapping of ``name -> sequence`` for additional covariates.
-    idvar : str, optional
-        Column name for subject IDs; defaults to ``'subject_ids'``.
-    batchvar : str, optional
-        Column name for batch labels; defaults to ``'batch'``.
-    timevar : str, optional
-        Column name for timepoints; defaults to ``'timepoints'``.
-    fix_eff : iterable, optional
-        Fixed-effect predictors; defaults to covariate keys plus
-        ``timevar``/``batchvar`` when not supplied.
-    ran_eff : iterable, optional
-        Random-effect grouping variables; defaults to ``[idvar]``.
-    do_zscore : bool, default True
-        Z-score the response per-feature when True.
-    reml : bool, default False
-        Whether to fit MixedLM using REML.
-    verbose : bool, default True
-        Print progress / model formulas.
+    Args:
+        data: Optional DataFrame used directly when provided.
+        idp_matrix: Optional feature matrix used when `data` is not supplied.
+        subjects: Optional subject IDs used when building a DataFrame from
+            arrays.
+        timepoints: Optional timepoint labels used when building a DataFrame
+            from arrays.
+        batch_name: Optional batch labels used when building a DataFrame from
+            arrays.
+        idp_names: Optional feature names for `idp_matrix`.
+        covariates: Optional mapping of `name -> sequence` for additional
+            covariates.
+        idvar: Column name for subject IDs.
+        batchvar: Column name for batch labels.
+        timevar: Column name for timepoints.
+        fix_eff: Fixed-effect predictors.
+        ran_eff: Random-effect grouping variables.
+        do_zscore: Whether to z-score the response per feature.
+        reml: Whether to fit `MixedLM` using REML.
+        verbose: Whether to print progress and model formulas.
 
-    Returns
-    -------
-    tuple of (pd.DataFrame, list)
-        A tuple ``(results_df, model_defs)`` where ``results_df`` contains one
-        row per feature with columns:
+    Returns:
+        pd.DataFrame: One row per feature with multiplicative batch-effect test
+        statistics, degrees of freedom, p-values, and method labels.
 
-        - ``"Feature"``: feature name.
-        - ``"ChiSq"``: Fligner test statistic (chi-square).
-        - ``"DF"``: degrees of freedom (n_groups - 1).
-        - ``"p-value"``: p-value from Fligner's test.
-        - ``"method"``: ``"Fligner"`` (or ``None`` if the test could not be
-          run).
+    Raises:
+        KeyError: If `fix_eff` or `ran_eff` variables are not found in the assembled DataFrame.
+        ValueError: If `idp_matrix` is not 2-D or if input sequence lengths do not match the number of rows.
 
-        ``model_defs`` is a list of dicts capturing per-feature formula and
-        settings.
-
-    Raises
-    ------
-    KeyError
-        If ``fix_eff`` or ``ran_eff`` variables are not found in the assembled
-        DataFrame.
-    ValueError
-        If ``idp_matrix`` is not 2-D, or if input sequence lengths do not
-        match the number of rows.
-
-    Notes
-    -----
-    - Per-feature predictor z-scoring is always applied to numeric ``fix_eff``
+    Notes:
+        Per-feature predictor z-scoring is always applied to numeric `fix_eff`
       (local to each feature) via ``_build_fixed_formula_terms``.
-    - ``do_zscore=True`` (default): z-scores the response per feature and uses
+        ``do_zscore=True`` (default): z-scores the response per feature and uses
       the z-scored response (``z_<feature>``) as LHS. Set ``do_zscore=False``
       to keep original units.
-    - ``reml=False`` (default): MixedLM fits are run with REML disabled.
+        ``reml=False`` (default): MixedLM fits are run with REML disabled.
       Pass ``reml=True`` to change that.
-    - ``ran_eff`` defaults to ``[idvar]`` (where ``idvar`` defaults to
+        ``ran_eff`` defaults to ``[idvar]`` (where ``idvar`` defaults to
       ``'subject_ids'``).
-    - Residuals used for the variance test are extracted from the full
+        Residuals used for the variance test are extracted from the full
       mixed-model fit. If fitting fails for a given feature, that feature is
       returned with NaNs.
     - The Fligner test requires at least two groups and non-empty residual

@@ -18,7 +18,7 @@ def LMM_Diagnostics_Plot(
     max_labels=50,
     include_delta_r2=True,
     include_status_summary=True,
-):
+) -> list[tuple[str, mfig.Figure]]:
     """
     Plot LMM diagnostics from Run_LMM_cross_sectional output.
 
@@ -30,7 +30,8 @@ def LMM_Diagnostics_Plot(
         include_status_summary (bool): If True, add a status/notes summary plot.
 
     Returns:
-        list of tuples: [(caption, fig), ...]
+        list[tuple[str, matplotlib.figure.Figure]]: Caption and figure pairs for
+        the generated diagnostic plots.
     """
     import numpy as np
     import pandas as pd
@@ -537,7 +538,7 @@ def PC_corr_plot(
     *,
     show: bool = False,
     cluster_batches: bool = False
-):
+) -> list[tuple[str, plt.Figure]]:
     """
     Generate PCA diagnostic plots and return a list of (caption, fig).
 
@@ -545,14 +546,19 @@ def PC_corr_plot(
         PrincipleComponents (np.ndarray): 2D array of shape (n_samples, n_components) containing PCA scores.
         batch (np.ndarray or list): 1D array or list of batch labels corresponding to each sample.
         covariates (optional): Optional covariate data. Can be a DataFrame, structured array, or 2D array. Defaults to None.
-        variable_names (optional): Optional list of variable names for covariates and batch. If covariates provided, should match number of covariate columns. 
-        If first element is 'batch', it will be used as batch column name. Defaults to None.
+        variable_names (optional): Optional list of variable names for
+            covariates and batch. If supplied with covariates, the length should
+            match the number of covariate columns. If the first element is
+            `'batch'`, it is used as the batch column name.
+        PC_correlations (optional): Optional output from `PC_Correlations` used
+            to add correlation summary plots.
+        show (bool, optional): Whether to display the figures interactively.
+        cluster_batches (bool, optional): Whether to add batch-clustering
+            overlays to the PCA plots.
 
-    returns:
-        List[Tuple[str, plt.Figure]]: A list of tuples containing captions and corresponding figures for the PCA diagnostic plots.
-
-
-        
+    Returns:
+        list[tuple[str, plt.Figure]]: Caption and figure pairs for the PCA
+        diagnostic plots.
     """
     import numpy as np
     import pandas as pd
@@ -865,26 +871,32 @@ def clustering_analysis_all(
     UMAP_embedding=True,
     UMAP_neighbors=15,
     UMAP_min_dist=0.1,
-    UMAP_metric='euclidean'
-):
+    UMAP_metric='euclidean',
+    UMAP_tuning='auto', # Auto, batch or None: whether to automatically tune UMAP parameters based on data size, or allow user to specify tuning strategy
+) -> list[tuple[str, plt.Figure]]:
     """
-    Perform clustering analysis on PCA results and generate diagnostic plots, 
-    Additionally perform UMAP on raw data and show embedding colored by batch and covariates for comparison with PCA clustering.
+    Perform clustering diagnostics in PCA and optional UMAP space.
 
     Args:
-    PrincipleComponents (np.ndarray): 2D array of shape (n_samples, n_components) containing PCA scores.
-    data (np.ndarray): 2D array of shape (n_samples, n_features) containing the original data used for PCA (required for UMAP embedding).
-    batch (np.ndarray or list): 1D array or list of batch labels corresponding to each sample.
-    covariates (optional): Optional covariate data. Can be a DataFrame, structured array, or 2D array. Defaults to None.
-    variable_names (optional): Optional list of variable names for covariates and batch. If covariates provided, should match number of covariate columns. If first element is 'batch', it will be used as batch column name. Defaults to None.
-    show (bool, optional): Whether to display the plots. Defaults to False.
-    UMAP_embedding (bool, optional): Whether to perform UMAP embedding on the original data and plot it colored by batch and covariates. Defaults to True.
-    UMAP_neighbors (int, optional): The number of neighbors to use for UMAP. Defaults to 15.
-    UMAP_min_dist (float, optional): The minimum distance parameter for UMAP. Defaults to 0.1.
-    UMAP_metric (str, optional): The distance metric to use for UMAP. Defaults to 'euclidean'.
+        PrincipleComponents (np.ndarray): PCA score matrix with shape
+            `(n_samples, n_components)`.
+        data (np.ndarray): Original feature matrix used for the optional UMAP
+            embedding.
+        batch (np.ndarray or list): Batch labels for each sample.
+        covariates (optional): Optional covariate data to color the plots.
+        variable_names (optional): Optional names for the covariates and batch
+            variables.
+        show (bool, optional): Whether to display the figures interactively.
+        UMAP_embedding (bool, optional): Whether to compute and plot a UMAP
+            embedding of the raw data.
+        UMAP_neighbors (int, optional): Number of neighbors for UMAP.
+        UMAP_min_dist (float, optional): Minimum distance parameter for UMAP.
+        UMAP_metric (str, optional): Distance metric passed to UMAP.
 
-
-    Args:"""
+    Returns:
+        list[tuple[str, plt.Figure]]: Caption and figure pairs for the
+        generated PCA and optional UMAP plots.
+    """
 
     import numpy as np
     import pandas as pd
@@ -967,10 +979,63 @@ def clustering_analysis_all(
     if data is not None and len(data) > 10000:
         print("Data has more than 10,000 samples; This may make UMAP very slow and memory intensive.")
 
-
     # Perform UMAP embedding if data is provided and not too large (to avoid long runtime and memory issues)
 
     if data is not None:
+        # If UMAP_tuning is set to 'auto', we can adjust UMAP parameters based on data size (e.g. reduce n_neighbors for larger datasets)
+        n_samples = data.shape[0]
+
+        if UMAP_tuning == "auto":
+            if n_samples < 1000:
+                UMAP_neighbors = 15
+                UMAP_min_dist = 0.1
+            elif n_samples < 5000:
+                UMAP_neighbors = 30
+                UMAP_min_dist = 0.15
+            elif n_samples < 10000:
+                UMAP_neighbors = 50
+                UMAP_min_dist = 0.15
+            else:
+                UMAP_neighbors = round(max(50, n_samples // 250))  # heuristic: 0.4% of samples, but at least 50
+                UMAP_min_dist = 0.2
+
+            UMAP_neighbors = min(UMAP_neighbors, max(2, n_samples - 1))
+
+        if UMAP_tuning == "batch":
+            # Define set of neighbours to try, test silhouette score for each, and pick best. This is more computationally intensive but can yield better results.
+            from sklearn.metrics import silhouette_score
+            best_score = -1
+            param_grid = [
+            (n, d)
+            for n in [10, 15, 30, 50]
+            for d in [0.01, 0.1, 0.3]
+            ]
+            best_score = -1
+            best_params = None
+            best_embedding = None
+            # If dataset large, subsample for tuning to speed up:
+            if n_samples > 5000:
+                idx = np.random.choice(n_samples, size=5000, replace=False)
+                data_sub = data[idx]
+                batch_sub = batch[idx]
+            else:
+                data_sub = data
+                batch_sub = batch
+
+            for n, d in param_grid:
+                reducer = umap.UMAP(n_neighbors=n, min_dist=d, random_state=42)
+                emb = reducer.fit_transform(data_sub)
+
+                score = silhouette_score(emb, batch_sub)
+
+                if score > best_score:
+                    best_score = score
+                    best_params = (n, d)
+                    best_embedding = emb
+
+            UMAP_neighbors, UMAP_min_dist = best_params
+
+        
         reducer = umap.UMAP(n_neighbors=UMAP_neighbors, min_dist=UMAP_min_dist, metric=UMAP_metric, random_state=42)
         embedding = reducer.fit_transform(data)
 
@@ -982,7 +1047,6 @@ def clustering_analysis_all(
                 df_umap[name] = cov_matrix[:, i]
                 df[name] = cov_matrix[:, i]
         # Plot UMAP on right, PCA on left for batch and covariates:
-    
 
         fig_umap, ax = plt.subplots(1, 2, figsize=(16, 6))
         sns.scatterplot(data=df_umap, x="UMAP1", y="UMAP2", hue=batch_col_name, palette="tab10", alpha=0.7, ax=ax[0])
@@ -1027,7 +1091,14 @@ def clustering_analysis_all(
                 if len(np.unique(vals)) <= 20:
                     ax_cov[1].legend(loc="best", bbox_to_anchor=(1, 0.5), fontsize="small", frameon=True)
                 ax_cov[1].grid(True)
+                # Add text to x_axis to indicate UMAP parameters used for clarity
+                ax_cov[0].set_xlabel(f"UMAP1 (n_neighbors={UMAP_neighbors}, min_dist={UMAP_min_dist})")
+                ax_cov[0].set_ylabel("UMAP2")
+
                 figs.append((f"UMAP and PCA embedding by {name}", fig_cov))
+                # Add the n_neighbors and min_dist parameters to the caption for clarity on what was used for UMAP                
+    # Create a string summary UMAP parametrs and have the function return it along with the figures, so it can be logged to the report text as well.
+    umap_param_summary = f"UMAP parameters: n_neighbors={UMAP_neighbors}, min_dist={UMAP_min_dist}, metric={UMAP_metric}, tuning={UMAP_tuning}"
 
     if show:
         for _, f in figs:
@@ -1059,7 +1130,7 @@ def clustering_analysis_UMAP(data, batch,
         raise ValueError("Length of data and covariates must match.")
     
     # Check data size, if too large, log a warning and skip UMAP to avoid long runtime
-    if len(data) > 10000:
+    if len(data) > 100000:
         if rep is not None:
             rep.log_text(f"Data has {len(data)} samples, which may lead to long UMAP runtime. Skipping UMAP embedding.")
         return []
@@ -1104,7 +1175,6 @@ def clustering_analysis_UMAP(data, batch,
                     rep.log_plot(fig, f"UMAP embedding colored by covariate {i+1}")
                     plt.close(fig)
 
-    
     # Check if figs is empty (e.g. if data too large and UMAP skipped), and log a message if so
     if not figs and rep is not None:
         rep.log_text("No UMAP plots generated (data may have been too large).")
@@ -1132,10 +1202,9 @@ def plot_eigen_spectra_and_cumulative(
         caption_prefix: prefix for plot captions.
 
     Returns:
-        results dict containing:
-          - 'per_batch_variance': {batch_label: 1D-array length k of variances per PC}
-          - 'per_batch_frac_var': {batch_label: 1D-array length k of fraction variance (per-batch)}
-          - 'pcs_used': k
+        dict[str, Any]: A dictionary containing per-batch variance curves,
+        per-batch fraction-of-variance curves, and the number of principal
+        components used.
     """
     # Basic checks
     if score.ndim != 2:
@@ -1259,11 +1328,9 @@ def plot_covariance_frobenius(
         caption_prefix: prefix for plot captions.
 
     Returns:
-        results dict containing:
-          - 'cov_matrices': {batch_label: k x k covariance matrix}
-          - 'pairwise_frobenius': DataFrame-like dict or 2D np.array of pairwise norms
-          - 'pairwise_frobenius_normalized': same but normalized (if normalize=True)
-          - 'pcs_used': k
+        dict[str, Any]: A dictionary containing the batch covariance matrices,
+        pairwise Frobenius distances, optional normalized distances, and the
+        number of principal components used.
     """
     import pandas as pd  
 
@@ -1566,101 +1633,7 @@ def mahalanobis_distance_plot(results: dict,
 """----------------------------------------------------------------------------------------------------------------------------"""
 """---------------------------------------- Plotting functions for Two-sample Kolmogorov-Smirnov test ----------------------------------"""
 """----------------------------------------------------------------------------------------------------------------------------"""
-def KS_plot_old(ks_results: dict,
-             feature_names: list = None,
-               rep = None,            # optional StatsReporter
-                 caption: Optional[str] = None,
-                   show: bool = False) -> plt.Figure:
-    """
-    Plot the output of the two sample KS test as ordered plots of the -log10 p-values for each feature.
 
-    Overall, returns two plots
-        - one plot showing the pairwise KS test results for each feature as a dot plot (ordered as -log10 p-value)
-        - One plot showing the batch vs whole dataset (excluding that batch), again as a dot plot ordered by -log10 p-value.
-
-    Args:
-        ks_results (dict): Output from TwoSampleKSTest(...)
-            ks_results: keys are tuples like (b, 'overall') or (b1, b2)
-        - each value is a dict with:
-            'statistic': np.array of D statistics (length n_features)
-            'p_value': np.array of p-values (nan where test not run)
-            'p_value_fdr': np.array of BH-corrected p-values (if do_fdr else None)
-            'n_group1': array of sample counts per feature for group1 (same across features but kept for completeness)
-            'n_group2': array of counts for group2
-            'summary': {'prop_significant': float, 'mean_D': float}
-    Returns:
-        figs (list): List of (caption, fig) tuples for each plot generated.
-
-    """
-    # ---- Validation ---- Structure of dictionary has batch vs over all and batch vs batch as keys
-
-    import numpy as np
-    import matplotlib.pyplot as plt
-    import matplotlib.gridspec as gridspec
-    from matplotlib.figure import Figure
-    from matplotlib.pyplot import gca    
-# plot batch vs overall on one plot and code with the legend:
-    fig= plt.figure(figsize=(12, 6))
-    figs = []
-    ax = gca()
-
-    for key in ks_results:
-        if len(key) == 2 and key[1] == 'overall':
-            b = key[0]
-            res = ks_results[key]
-            p_values = res['p_value']
-            if feature_names is not None and len(feature_names) != len(p_values):
-                raise ValueError("feature_names length must match number of features in ks_results.")
-            n_features = len(p_values)
-            indices = np.arange(n_features)
-            # sort by -log10 p-value
-            sorted_indices = np.argsort(-np.log10(p_values + 1e-10))  # add small value to avoid log(0)
-            sorted_pvals = p_values[sorted_indices]
-            sorted_features = feature_names[sorted_indices] if feature_names is not None else sorted_indices
-            ax.plot(indices, -np.log10(sorted_pvals + 1e-10), '*',label=f'Batch {b} vs Overall')
-    plt.xlabel("Features (ordered by -log10 p-value)")
-    plt.ylabel("-log10 p-value")
-    plt.title("KS Test: Batch vs Overall")
-    plt.grid(True)
-    plt.legend()
-    sig_threshold_05 = -np.log10(0.05 / n_features)
-    sig_threshold_01 = -np.log10(0.01 / n_features)
-    plt.axhline(y=sig_threshold_05, color='r', linestyle='-', label='Significance Threshold (0.05 Bonferroni)')
-    plt.axhline(y=sig_threshold_01, color='g', linestyle='-', label='Significance Threshold (0.01 Bonferroni)')
-    figs.append((caption or "KS Test: Batch vs Overall", fig))
-
-    # Repeat for batch vs batch on next figure:
-    """fig2 = plt.figure(figsize=(12, 6))
-    ax2 = gca()
-    for key in ks_results:
-        if len(key) == 2 and key[1] != 'overall':
-            b = key[0]
-            res = ks_results[key]
-            p_values = res['p_value']
-            if feature_names is not None and len(feature_names) != len(p_values):
-                raise ValueError("feature_names length must match number of features in ks_results.")
-            n_features = len(p_values)
-            indices = np.arange(n_features)
-            # sort by -log10 p-value
-            sorted_indices = np.argsort(-np.log10(p_values + 1e-10))  # add small value to avoid log(0)
-            sorted_pvals = p_values[sorted_indices]
-            sorted_features = feature_names[sorted_indices] if feature_names is not None else sorted_indices
-            ax2.plot(indices, -np.log10(sorted_pvals + 1e-10),'.', label=f'Batch {b} vs Overall')
-    plt.xlabel("Features (ordered by -log10 p-value)")
-    plt.ylabel("-log10 p-value")
-    plt.title("KS Test: Batch vs Batch")
-    plt.grid(True)"""
-
-    # Check if show is given, if so, display the plots
-    for caption_i, fig in figs:
-        if rep is not None:
-            rep.log_plot(fig, caption_i)
-            plt.close(fig)
-        else: figs.append((caption_i, fig))
-    if show:
-        for _, fig in figs:
-            fig.show()
-    return rep if rep is not None else figs
 
 from typing import Optional
 import numpy as np
@@ -1673,40 +1646,23 @@ def KS_plot(
     rep=None,                      # optional StatsReporter
     caption: Optional[str] = None,
     show: bool = False
-):
+) -> Any:
     """
-    Plot KS test results with:
-      1) p-values ordered by raw p-value, with BH-adjusted values shown
-      2) p-values in original feature order, with BH-adjusted values shown
-      3) KS D statistic with the per-feature critical D threshold needed to reject H0
-
-    Returns:
-      If rep is provided: rep
-      Otherwise: list of (caption, fig) tuples
-    """
-    """
-    Plot the output of the two sample KS test:
-      1) p-values ordered by raw p-value, with BH-adjusted values shown
-      2) p-values in original feature order, with BH-adjusted values shown
-      3) KS D statistic with the per-feature critical D threshold needed to reject H0
-
-    Overall, returns three plots per comparison (batch vs overall and batch vs batch):
-
-        - one plot showing the pairwise KS test results for each feature as a dot plot (ordered as -log10 p-value)
-        - One plot showing the batch vs whole dataset (excluding that batch), again as a dot plot ordered by -log10 p-value.
+    Plot detailed KS-test results for each comparison.
 
     Args:
-        ks_results (dict): Output from TwoSampleKSTest(...)
-            ks_results: keys are tuples like (b, 'overall') or (b1, b2)
-        - each value is a dict with:
-            'statistic': np.array of D statistics (length n_features)
-            'p_value': np.array of p-values (nan where test not run)
-            'p_value_fdr': np.array of BH-corrected p-values (if do_fdr else None)
-            'n_group1': array of sample counts per feature for group1 (same across features but kept for completeness)
-            'n_group2': array of counts for group2
-            'summary': {'prop_significant': float, 'mean_D': float}
+        ks_results (dict): Output from `KS_Test`, keyed by tuples such as
+            `(batch, "overall")` or `(batch1, batch2)`.
+        feature_names (list, optional): Optional feature names for plot labels.
+        rep (optional): Report object used to log plots instead of returning
+            them.
+        caption (str, optional): Optional caption prefix.
+        show (bool, optional): Whether to display the generated figures.
+
     Returns:
-        figs (list): List of (caption, fig) tuples for each plot generated."""
+        Any: The report object if `rep` is provided; otherwise a list of
+        `(caption, figure)` tuples.
+    """
 
 
 
@@ -2360,11 +2316,24 @@ def build_style_registry(subjects,
                          subject_palette="tab10",
                          idp_palette="Set2",
                          subject_markers=None,
-                         idp_markers=None):
+                         idp_markers=None) -> tuple[dict[Any, tuple[Any, str]], dict[Any, tuple[Any, str]]]:
     """
+    Build color and marker registries for subjects and IDPs.
+
+    Args:
+        subjects: Subject identifiers that need plotting styles.
+        idps: IDP identifiers that need plotting styles.
+        subject_palette (str, optional): Matplotlib or seaborn palette name for
+            subjects.
+        idp_palette (str, optional): Matplotlib or seaborn palette name for
+            IDPs.
+        subject_markers (list, optional): Marker cycle for subjects.
+        idp_markers (list, optional): Marker cycle for IDPs.
+
     Returns:
-      subject_style: dict {subject: (color, marker)}
-      idp_style: dict {idp: (color, marker)}
+        tuple[dict[Any, tuple[Any, str]], dict[Any, tuple[Any, str]]]: Subject
+        and IDP style dictionaries mapping each identifier to a `(color,
+        marker)` pair.
     """
 
     if subject_markers is None:
@@ -2827,16 +2796,33 @@ def plot_MixedEffectsPart2(df,
                                          title=None,
                                          savepath=None,
                                          rep=None,
-                                         show: bool=False):
+                                         show: bool=False) -> tuple[plt.Figure, list[plt.Axes]]:
     """
-    Plot each fixed-effect on its own subplot: IDPs on x-axis, est as marker, CI as vertical line.
-    - df: dataframe containing rows with IDP and columns like '{eff}_est','{eff}_pval','{eff}_ciL','{eff}_ciU'
-    - fix_eff: iterable of effect names (strings)
-    - p_thr: p-value threshold to consider an estimate "significant" (filled highlight)
-    - effect_style: optional dict mapping effect -> (color, marker); missing effects get default styling
-    - idp_order: list of IDP names in desired order; if None, order is df[idp_col] appearance
-    - highlight_color: color used to fill markers when p < p_thr
-    Returns: fig, axes (axes is a list of axes objects matching fix_eff order)
+    Plot fixed-effect estimates and confidence intervals across IDPs.
+
+    Args:
+        df: DataFrame containing `IDP` rows and effect summary columns such as
+            `"{eff}_est"`, `"{eff}_pval"`, `"{eff}_ciL"`, and `"{eff}_ciU"`.
+        idp_col: Column containing IDP names.
+        fix_eff: Iterable of fixed-effect names to plot.
+        p_thr: P-value threshold used to highlight significant estimates.
+        effect_style: Optional mapping from effect name to `(color, marker)`.
+        idp_order: Optional IDP display order. If `None`, the DataFrame order is
+            used.
+        figsize: Figure size passed to Matplotlib.
+        marker_size: Marker size for effect estimates.
+        cap_width: Horizontal half-width of the confidence interval caps.
+        linewidth: Line width for confidence intervals.
+        xtick_rotation: Rotation angle for x-axis labels.
+        highlight_color: Fill color used when `p < p_thr`.
+        title: Optional figure title.
+        savepath: Optional file path for saving the figure.
+        rep: Optional report object used to log the plot.
+        show: Whether to display the figure interactively.
+
+    Returns:
+        tuple[plt.Figure, list[plt.Axes]]: The Matplotlib figure and the list of
+        subplot axes in `fix_eff` order.
     """
     import warnings
 
