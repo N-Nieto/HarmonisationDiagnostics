@@ -1,6 +1,6 @@
 # Getting started
 
-Here we will provide a brief example of how to use DiagnoseHarmonization within a standard workflow, giving an example of how one would use the python version (which has full functionality) and how one would use the terminal instance of the tool (on csv files).
+Here we will provide a brief example of how to use DiagnoseHarmonisation within a standard workflow, giving an example of how one would use the python version (which has full functionality) and how one would use the terminal instance of the tool (on csv files).
 
 By far the easiest way to run this code is by using a python script and loading your data in as arrays.
 
@@ -8,11 +8,11 @@ By far the easiest way to run this code is by using a python script and loading 
 
 In terminal, run:
 
-    pip install git+https://github.com/Jake-Turnbull/HarmonizationDiagnostics.git
+    pip install git+https://github.com/Jake-Turnbull/HarmonisationDiagnostics.git
 
 Or alternatively clone locally:
-    git clone https://github.com/Jake-Turnbull/HarmonizationDiagnostics.git
-    cd HarmonizationDiagnostics
+    git clone https://github.com/Jake-Turnbull/HarmonisationDiagnostics.git
+    cd HarmonisationDiagnostics
     pip install -e .
 
 ## 2. Data requirements
@@ -32,7 +32,7 @@ There are two main functions for the generation of a cross-sectional report, a f
 
 Using the full report:
 
-    from DiagnoseHarmonization import DiagnosticReport
+    from DiagnoseHarmonisation import DiagnosticReport
         report = DiagnosticReport.CrossSectionalReport(
             data=X,
             batch=batch,
@@ -44,9 +44,9 @@ This will produce a detailed HTML file containing a full analysis of batch and c
 
 Assuming you detect significant batch effects, you would then select a harmonisation method based on which you have observed. For example, if the batch effect is only additive (difference in means) you may simply revert to regression. If the effect is more complex however, you may choose a more advanced method such as CovBat:
 
-    from DiagnoseHarmonization import HarmonizationFunctions
+    from DiagnoseHarmonisation import HarmonisationFunctions
 
-    X_new = HarmonizationFunctions.combat(X, 
+    X_new = HarmonisationFunctions.combat(X, 
     batch, 
     mod,
     covbat_mode=True

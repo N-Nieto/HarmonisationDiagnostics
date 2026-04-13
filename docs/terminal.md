@@ -1,4 +1,4 @@
-# Using DiagnoseHarmonization in the Terminal
+# Using DiagnoseHarmonisation in the Terminal
 
 While the ideal way we would recommend using this package is within a python script, we do offer some usage of accessing the cross-sectional reporting tool through the terminal.
 
@@ -8,7 +8,7 @@ After downloading the package and ensuring it is on your python path (check usin
 
 The options for running this are seen below:
 
-    "harmdiag",  description="Harmonization Diagnostics CLI — run harmonisation/reporting from the terminal."
+    "harmdiag",  description="Harmonisation Diagnostics CLI — run harmonisation/reporting from the terminal."
   
 
     "run", help="Run the diagnostics pipeline from data and covariates CSVs"

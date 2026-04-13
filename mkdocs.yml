@@ -1,4 +1,4 @@
-site_name: DiagnoseHarmonize
+site_name: DiagnoseHarmonise
 
 theme:
   name: material
@@ -11,7 +11,7 @@ nav:
   - Terminal: terminal.md
   - API Reference:
       - DiagnosticReport: api/DiagnosticReport.md
-      - HarmonizationFunctions: api/HarmonizationFunctions.md
+      - HarmonisationFunctions: api/HarmonisationFunctions.md
       - DiagnosticFunctions: api/DiagnosticFunctions.md
       - PlotDiagnosticResults: api/PlotDiagnosticResults.md
       - LoggingTool: api/LoggingTool.md
