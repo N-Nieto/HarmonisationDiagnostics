@@ -1,6 +1,8 @@
 # DiagnoseHarmonise
 
-DiagnoseHarmonize is an **in-development** library for the streamlined application and assessment of harmonisation algorithms at the summary-measure level. It also serves as a centralised location for popular, well-validated harmonisation methods from the literature. Full documentation is available here **[DiagnoseHarmonisation](https://jake-turnbull.github.io/HarmonisationDiagnostics/)**
+[![DOI](https://zenodo.org/badge/1016745071.svg)](https://doi.org/10.5281/zenodo.19595960)
+
+DiagnoseHarmonize is an **in-development** library for the streamlined application and assessment of harmonisation algorithms at the summary-measure level. It also serves as a centralised location for popular, well-validated harmonisation methods from the literature. Full documentation is available here **[DiagnoseHarmonisation](https://jake-turnbull.github.io/HarmonisationDiagnostics/)**.
 
 In an upcoming paper, we plan to demonstrate that systematic evaluation and reporting of different components of batch effects is not only beneficial for choosing an appropriate harmonisation strategy, but essential for evaluating how well harmonisation has worked.
 
