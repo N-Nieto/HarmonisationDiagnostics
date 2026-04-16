@@ -1,4 +1,4 @@
-# DiagnoseHarmonise
+# DiagnoseHarmonise (DHARM)
 
 
 [![DOI](https://img.shields.io/badge/DOI-10.5281%2Fzenodo.19595960-blue)](https://doi.org/10.5281/zenodo.19595960)
@@ -16,6 +16,13 @@ Load different components of the module by calling
 
 ```
 from DiagnoseHarmonisation import ModuleName
+```
+The commands can then be ran using ModuleName.FunctionName()
+
+The two main commands are those in the DiagnosticReport module:
+```
+DiagnosticReport.CrossSectionalReport()
+DiagnosticReport.LongitudinalReport()
 ```
 
 ## Support and Contact
