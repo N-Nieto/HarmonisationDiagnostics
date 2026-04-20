@@ -125,3 +125,11 @@ severity of batch effects (additive and multiplicative) and different covariate 
 The user can then visualise the feature-wise difference in batches using histograms and box-plots, generate a cross-sectional diagnostic report to view the effects in more detail and apply harmonisation (using ComBat). This allows the user to get a direct comparisson of the before/after of applying harmonisation by comparing the reports in a semi-realistic scenario.
 
 To run the simulator, run **streamlit run simulator.py** in the terminal.
+
+
+## Running the Example Notebooks on Binder
+
+You can run the example notebooks instantly online without any local setup using Binder.
+
+1.  **Click the badge** to launch the Binder environment:
+    [![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/N-Nieto/HarmonisationDiagnostics/HEAD)
